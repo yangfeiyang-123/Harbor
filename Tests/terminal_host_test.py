@@ -111,7 +111,9 @@ class HostTests(unittest.TestCase):
     def test_full_screen_foreground_program_keeps_running_and_accepts_input(self):
         first = self.client('create')
         self.until(first, b'7777;')
-        program = """
+        # Escape sequences belong to the program's output, not to the shell's
+        # line editor while it receives this command (notably Bash/readline).
+        program = r"""
 import os,select,time,tty
 tty.setraw(0)
 print('\x1b[?1049h',end='',flush=True)
