@@ -53,8 +53,10 @@ class HostTests(unittest.TestCase):
         self.clients.append(proc)
         return proc
 
-    def until(self, proc, expected, timeout=6):
-        data, end = b'', time.monotonic() + timeout
+    def until(self, proc, expected, timeout=6, initial=b''):
+        data, end = initial, time.monotonic() + timeout
+        if expected in data:
+            return data
         while time.monotonic() < end:
             if select.select([proc.stdout], [], [], .1)[0]:
                 block = os.read(proc.stdout.fileno(), 65536)
@@ -132,6 +134,10 @@ print('\x1b[?1049lTUI_FINISHED',flush=True)
         time.sleep(.6)
         second = self.client('attach')
         data = self.until(second, b'7777;')
+        # A busy runner may render fewer than five frames in the disconnect
+        # interval. Wait for output from the same process, retaining partial
+        # transport packets, rather than asserting a wall-clock frame rate.
+        data = self.until(second, b'FRAME_5_PID_' + pid, initial=data)
         frames = re.findall(rb'FRAME_(\d+)_PID_(\d+)', data)
         self.assertTrue(any(int(n) >= 5 and p == pid for n, p in frames), data)
         self.send(second, 'q')
