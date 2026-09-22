@@ -1,0 +1,13 @@
+Harbor liquid-glass design references (2026-09-08)
+
+Visual and interaction inspiration:
+https://github.com/rdev/liquid-glass-react
+https://github.com/rdev/liquid-glass-react/blob/master/src/index.tsx
+Upstream MIT license: Copyright (c) 2025 MAX ROVENSKY
+https://github.com/rdev/liquid-glass-react/blob/master/LICENSE
+
+Harbor uses an independently written native SwiftUI implementation and public
+Apple glassEffect / GlassEffectContainer APIs on macOS 26. No React, SVG filter,
+WebGL shader code or JavaScript dependency from that project is bundled.
+
+https://developer.apple.com/documentation/swiftui/applying-liquid-glass-to-custom-views

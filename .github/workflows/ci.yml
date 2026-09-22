@@ -1,0 +1,33 @@
+name: macOS checks
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  test:
+    runs-on: macos-26
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - name: Toolchain
+        run: |
+          swift --version
+          xcrun --show-sdk-version
+      - name: Swift checks
+        run: swift test --disable-sandbox --build-system native
+      - name: PTY and file runtime checks
+        run: |
+          python3 Tests/terminal_host_test.py
+          python3 scripts/test-workspace-runtime.py
+      - name: Build application
+        run: bash scripts/build-app.sh release
+      - name: Package and verify signature
+        run: bash scripts/package-release.sh

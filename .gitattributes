@@ -1,0 +1,3 @@
+vendor/** linguist-vendored -whitespace
+Sources/HarborSSH/Resources/Editor/editor.js linguist-generated -whitespace
+Sources/HarborSSH/Resources/Themes/** -whitespace

@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>en</string>
+	<key>CFBundleDisplayName</key>
+	<string>Harbor</string>
+	<key>CFBundleExecutable</key>
+	<string>HarborSSH</string>
+	<key>CFBundleIconFile</key>
+	<string>Harbor</string>
+	<key>CFBundleIdentifier</key>
+	<string>app.harbor.ssh</string>
+	<key>CFBundleLocalizations</key>
+	<array>
+		<string>en</string>
+	</array>
+	<key>CFBundleName</key>
+	<string>Harbor</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>0.24.0</string>
+	<key>CFBundleVersion</key>
+	<string>36</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>14.0</string>
+	<key>NSHighResolutionCapable</key>
+	<true/>
+	<key>NSHumanReadableCopyright</key>
+	<string>Copyright © 2026 Feiyang Yang. MIT License.</string>
+	<key>NSPrincipalClass</key>
+	<string>NSApplication</string>
+	<key>UTExportedTypeDeclarations</key>
+	<array>
+		<dict>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.data</string>
+			</array>
+			<key>UTTypeDescription</key>
+			<string>Harbor workspace item</string>
+			<key>UTTypeIdentifier</key>
+			<string>app.harbor.ssh.workspace-item</string>
+		</dict>
+		<dict>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.data</string>
+			</array>
+			<key>UTTypeDescription</key>
+			<string>Harbor terminal arrangement</string>
+			<key>UTTypeIdentifier</key>
+			<string>app.harbor.ssh.terminal-drag</string>
+		</dict>
+		<dict>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.data</string>
+			</array>
+			<key>UTTypeDescription</key>
+			<string>Harbor server order</string>
+			<key>UTTypeIdentifier</key>
+			<string>app.harbor.ssh.server-drag</string>
+		</dict>
+	</array>
+</dict>
+</plist>
