@@ -1,0 +1,38 @@
+name: Build release download
+on:
+  release:
+    types: [published]
+permissions:
+  contents: read
+jobs:
+  package:
+    runs-on: macos-26
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          ref: ${{ github.event.release.tag_name }}
+          persist-credentials: false
+      - name: Check release version
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          version=$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' Resources/Info.plist)
+          test "$RELEASE_TAG" = "v$version"
+      - name: Swift checks
+        run: swift test --disable-sandbox --build-system native
+      - name: PTY and file runtime checks
+        run: |
+          python3 Tests/terminal_host_test.py
+          python3 scripts/test-workspace-runtime.py
+      - name: Build and verify application
+        run: |
+          bash scripts/build-app.sh release
+          bash scripts/package-release.sh
+      - name: Attach download and checksum
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: gh release upload "$RELEASE_TAG" dist/*.zip dist/SHA256SUMS.txt --repo "$GITHUB_REPOSITORY"

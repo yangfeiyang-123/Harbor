@@ -57,20 +57,45 @@ struct FileTransferIndicator: View {
     @State private var details = false
     var body: some View {
         if let transfer = workspace.transfer {
-            Button { details.toggle() } label: {
-                HStack(spacing: 6) {
-                    if transfer.active {
-                        if let value = transfer.fraction { ProgressView(value: value).frame(width: 70) }
-                        else { ProgressView().controlSize(.mini) }
-                    } else { Image(systemName: transfer.completed ? "checkmark.circle" : "exclamationmark.triangle") }
-                    Text(transfer.summary).lineLimit(1).truncationMode(.middle)
+            indicator(for: transfer)
+        }
+    }
+
+    private func indicator(for transfer: FileTransferStatus) -> some View {
+        let accessibilityText = transfer.summary + ". " + transfer.amount
+        let helpText = [transfer.summary, transfer.amount, transfer.destination].joined(separator: "\n")
+        return Button(action: { details.toggle() }) {
+            FileTransferSummary(transfer: transfer)
+        }
+        .buttonStyle(.plain)
+        .frame(maxWidth: 400)
+        .accessibilityLabel(accessibilityText)
+        .help(helpText)
+        .popover(isPresented: $details, arrowEdge: .top) {
+            FileTransferDetails(transfer: transfer, dismiss: dismissTransfer)
+        }
+    }
+
+    private func dismissTransfer() {
+        details = false
+        workspace.transfer = nil
+    }
+}
+
+private struct FileTransferSummary: View {
+    let transfer: FileTransferStatus
+    var body: some View {
+        HStack(spacing: 6) {
+            if transfer.active {
+                if let value = transfer.fraction {
+                    ProgressView(value: value).frame(width: 70)
+                } else {
+                    ProgressView().controlSize(.mini)
                 }
-            }.buttonStyle(.plain).frame(maxWidth: 400)
-                .accessibilityLabel(transfer.summary + ". " + transfer.amount)
-                .help(transfer.summary + "\n" + transfer.amount + "\n" + transfer.destination)
-                .popover(isPresented: $details, arrowEdge: .top) {
-                    FileTransferDetails(transfer: transfer) { details = false; workspace.transfer = nil }
-                }
+            } else {
+                Image(systemName: transfer.completed ? "checkmark.circle" : "exclamationmark.triangle")
+            }
+            Text(transfer.summary).lineLimit(1).truncationMode(.middle)
         }
     }
 }
