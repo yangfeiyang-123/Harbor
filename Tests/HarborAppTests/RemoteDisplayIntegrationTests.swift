@@ -24,6 +24,7 @@ final class RemoteDisplayIntegrationTests: XCTestCase {
     }
     @MainActor func testWebViewerInputResizeDetachAndRelease() async throws {
         _ = NSApplication.shared
+        NSApp.setActivationPolicy(.regular)
         var profile = RemoteDisplayProfile(); profile.useSSHTunnel = false
         profile.address = "http://127.0.0.1:1/"
         let session = RemoteDisplaySession(profile: profile)
@@ -46,7 +47,7 @@ final class RemoteDisplayIntegrationTests: XCTestCase {
             XCTAssertLessThanOrEqual(web.bounds.width, width)
         }
         session.detachWindow(); XCTAssertTrue(session.detached)
-        try await Task.sleep(nanoseconds: 200_000_000)
+        try await wait { web.window?.title.contains("Remote Display") == true }
         XCTAssertTrue(web.window?.title.contains("Remote Display") == true)
         XCTAssertGreaterThan(web.bounds.height, 200)
         XCTAssertGreaterThan(web.bounds.width, 400)

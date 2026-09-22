@@ -118,9 +118,12 @@ final class TerminalMosaicIntegrationTests: XCTestCase {
         let sessions = [first, second, fourth, third]
         let pids = sessions.map { $0.terminal.process.shellPid }
         XCTAssertTrue(pids.allSatisfy { $0 > 0 })
+        // macOS can suppress animation for windows that have never been shown.
         let hosting = NSHostingView(rootView: ContentView().environmentObject(store).defaultAppStorage(prefs))
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1000, height: 760), styleMask: [.titled, .resizable], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false; window.contentView = hosting
+        NSApp.setActivationPolicy(.regular)
+        window.makeKeyAndOrderFront(nil)
         defer { window.contentView = nil; window.close() }
         for _ in 0..<3 {
             store.currentFiles.terminalVisible = false
@@ -153,8 +156,10 @@ final class TerminalMosaicIntegrationTests: XCTestCase {
         }
         let collapsedX = try XCTUnwrap(positions.last)
         XCTAssertLessThan(collapsedX, expandedX - 150)
-        XCTAssertGreaterThan(Set(positions.filter { $0 > collapsedX + 2 && $0 < expandedX - 2 }.map { Int($0) }).count, 2,
-                             "The native content must pass through intermediate widths: \(positions)")
+        if !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
+            XCTAssertGreaterThan(Set(positions.filter { $0 > collapsedX + 2 && $0 < expandedX - 2 }.map { Int($0) }).count, 2,
+                                 "The native content must pass through intermediate widths: \(positions)")
+        }
         XCTAssertTrue(positions.allSatisfy { $0 >= collapsedX - 1 && $0 <= expandedX + 1 })
         if let output = ProcessInfo.processInfo.environment["HARBOR_QA_OUTPUT"] {
             let evidence: [String: Any] = ["expandedX": expandedX, "collapsedX": collapsedX, "sampleIntervalMs": 20, "nativeTerminalX": positions]
