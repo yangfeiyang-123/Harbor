@@ -252,12 +252,16 @@ enum DisplayError: LocalizedError {
 
 struct RemoteWebSurface: NSViewRepresentable {
     let web: WKWebView
+    let canMount: () -> Bool
     func makeNSView(context: Context) -> DisplayWebHost { DisplayWebHost() }
-    func updateNSView(_ host: DisplayWebHost, context: Context) { host.web = web; host.mount() }
+    func updateNSView(_ host: DisplayWebHost, context: Context) {
+        host.web = web; host.canMount = canMount; host.mount()
+    }
 }
 
 final class DisplayWebHost: NSView {
     weak var web: WKWebView?
+    var canMount: () -> Bool = { false }
     override var isFlipped: Bool { true }
     override var intrinsicContentSize: NSSize { NSSize(width: NSView.noIntrinsicMetric, height: NSView.noIntrinsicMetric) }
     override init(frame: NSRect) { super.init(frame: frame); wantsLayer = true; layer?.masksToBounds = true }
@@ -265,7 +269,9 @@ final class DisplayWebHost: NSView {
     override func viewDidMoveToWindow() { super.viewDidMoveToWindow(); mount() }
     override func layout() { super.layout(); if let web, web.superview === self { web.frame = bounds } }
     func mount() {
-        guard window != nil, let web else { return }
+        // SwiftUI can update the old host after the detached window has mounted the
+        // same live WKWebView. Only the session's current owner may reparent it.
+        guard window != nil, canMount(), let web else { return }
         if web.superview !== self { web.removeFromSuperview(); addSubview(web) }
         web.translatesAutoresizingMaskIntoConstraints = true
         web.autoresizingMask = [.width, .height]; web.frame = bounds

@@ -136,7 +136,8 @@ struct RemoteDisplayCanvas: View {
             if session.detached && !inWindow {
                 VStack(spacing: 12) { Image(systemName: "macwindow.on.rectangle").font(.largeTitle); Text("Display is open in its own window"); Button("Show Window") { session.detachWindow() } }.frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if let web = session.web {
-                RemoteWebSurface(web: web).frame(maxWidth: .infinity, maxHeight: .infinity)
+                RemoteWebSurface(web: web, canMount: { session.detached == inWindow })
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 18) {

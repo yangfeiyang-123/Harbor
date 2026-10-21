@@ -4,6 +4,14 @@
 
 **当前源码：0.36.0（build 78）。** [English](README.md) · [发布记录与下载](https://github.com/yangfeiyang-123/Harbor/releases)
 
+## 下载与安装
+
+[**下载 Harbor 0.36.0：Apple Silicon Mac**](https://github.com/yangfeiyang-123/Harbor/releases/tag/v0.36.0)
+
+支持 macOS 14 或更新系统、M1 及更新芯片。打开 DMG，把 Harbor 拖入 Applications；也可解压 ZIP 后移入“应用程序”。升级前请先退出旧版。
+
+当前采用 ad-hoc 签名，尚未经过 Apple 公证。首次启动如被 macOS 拦截，尝试打开后前往 **系统设置 → 隐私与安全性 → 仍要打开**。详见[安装说明](docs/install-release.txt)。首次打开 Code-OSS 工作区需要联网安装并校验运行时，本地工作区需要 Mac 提供 Python 3，远程工作区需要服务器提供 Python 3。
+
 ## 主要功能
 
 - **Code-OSS 编辑器**：项目文件、搜索、扩展和集成终端；扩展来自 Open VSX。首次打开工作区时按需安装并校验运行时。

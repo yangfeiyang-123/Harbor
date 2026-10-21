@@ -1,0 +1,42 @@
+Harbor 0.36.0 (build 78)
+macOS 14 or later · Apple Silicon (M1 or later)
+
+INSTALL
+1. Download Harbor-0.36.0-macOS-arm64.dmg from the official GitHub release.
+2. Open the disk image and drag Harbor into Applications.
+3. Eject the disk image and open Harbor from Applications.
+
+The ZIP contains the same Harbor.app if you prefer to extract it manually.
+No Xcode or Swift compiler is needed to run the prebuilt application.
+Opening a Code-OSS workspace needs an internet connection to install its verified
+editor runtime. Python 3 is required on the machine hosting a workspace (this Mac for local
+folders, or the SSH server for remote folders).
+
+FIRST OPEN
+This community build is ad-hoc signed; it is not Apple Developer ID notarized.
+macOS may block its first launch. After attempting to open Harbor, use
+System Settings > Privacy & Security > Open Anyway for Harbor, if you trust
+this official download. Keep normal macOS security settings enabled.
+
+UPGRADE
+Quit the old Harbor before replacing it. Your configuration stays in
+~/Library/Application Support/HarborSSH/ and passwords stay in the login keychain.
+The release contains no personal server configuration, passwords or history.
+
+VERIFY
+Download SHA256SUMS.txt into the same folder as the DMG or ZIP and compare the
+SHA-256 value with: shasum -a 256 Harbor-0.36.0-macOS-arm64.dmg
+
+中文安装说明
+支持 macOS 14 或更新系统、Apple Silicon 芯片（M1 及更新）。
+打开 DMG，把 Harbor 拖入 Applications，再从“应用程序”中打开。
+也可以下载 ZIP，解压后把 Harbor.app 移到“应用程序”。
+运行预编译应用不需要 Xcode 或 Swift 编译器。
+首次打开 Code-OSS 工作区需要联网安装并校验编辑器运行时；
+本地工作区需要 Mac 上提供 Python 3，远程工作区需要服务器提供 Python 3。
+当前版本采用 ad-hoc 签名，尚未经过 Apple 公证。如果首次启动被拦截，
+尝试打开后前往“系统设置 > 隐私与安全性”，找到 Harbor 并选择“仍要打开”。
+升级前退出旧版 Harbor，再替换应用；原有设置和钥匙串密码会保留。
+
+Official source and releases:
+https://github.com/yangfeiyang-123/Harbor

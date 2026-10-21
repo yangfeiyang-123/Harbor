@@ -2,25 +2,40 @@ name: Build release download
 on:
   release:
     types: [published]
+  workflow_dispatch:
+  push:
+    branches: ['release/v*']
 permissions:
   contents: read
+concurrency:
+  group: harbor-release-${{ github.ref }}
+  cancel-in-progress: false
 jobs:
   package:
     runs-on: macos-26
-    timeout-minutes: 20
+    timeout-minutes: 25
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
-          ref: ${{ github.event.release.tag_name }}
+          ref: ${{ github.event_name == 'release' && github.event.release.tag_name || github.sha }}
           persist-credentials: false
       - name: Check release version
         env:
-          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_TAG: ${{ github.event.release.tag_name }}
+          EVENT_BRANCH: ${{ github.ref_name }}
         run: |
           version=$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' Resources/Info.plist)
-          test "$RELEASE_TAG" = "v$version"
+          if [ "$EVENT_NAME" = release ]; then
+            test "$EVENT_TAG" = "v$version"
+          elif [ "$EVENT_NAME" = push ]; then
+            test "$EVENT_BRANCH" = "release/v$version"
+          fi
+          test -f "docs/release-v$version.md"
+          echo "RELEASE_TAG=v$version" >> "$GITHUB_ENV"
+          echo "RELEASE_VERSION=$version" >> "$GITHUB_ENV"
       - name: Swift checks
         run: swift test --disable-sandbox --build-system native
       - name: PTY and file runtime checks
@@ -32,8 +47,24 @@ jobs:
         run: |
           bash scripts/build-app.sh release
           bash scripts/package-release.sh
-      - name: Attach download and checksum
+      - name: Publish download and checksums
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ github.event.release.tag_name }}
-        run: gh release upload "$RELEASE_TAG" dist/*.zip dist/SHA256SUMS.txt --repo "$GITHUB_REPOSITORY"
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          assets=(dist/*.zip dist/*.dmg dist/SHA256SUMS.txt dist/INSTALL.txt)
+          if [ "$EVENT_NAME" = release ]; then
+            gh release upload "$RELEASE_TAG" "${assets[@]}" --repo "$GITHUB_REPOSITORY" --clobber
+          else
+            if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+              draft=$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft)
+              test "$draft" = true || { echo "Refusing to replace an already published release."; exit 1; }
+              gh release upload "$RELEASE_TAG" "${assets[@]}" --repo "$GITHUB_REPOSITORY" --clobber
+            else
+              gh release create "$RELEASE_TAG" "${assets[@]}" --repo "$GITHUB_REPOSITORY" \
+                --target "$GITHUB_SHA" --title "Harbor $RELEASE_VERSION" \
+                --notes-file "docs/release-$RELEASE_TAG.md" --draft
+            fi
+            gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest
+          fi

@@ -18,7 +18,9 @@ import QuartzCore
     static func duration(_ level: HarborMotion.Level) -> Double {
         switch level { case .full: return 0.34; case .subtle: return 0.16; case .off: return 0 }
     }
-    static let key = "harbor.theme"
+    // Core Animation stores CATransition under this canonical key, even when add
+    // receives a different one. Use the same key for adding and inspecting it.
+    static let key = kCATransition
     private static var observer: AppearanceObserver?
 
     /// Watches the stored theme from launch on, so that whatever changes it (Settings, the

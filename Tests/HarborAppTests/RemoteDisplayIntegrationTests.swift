@@ -12,7 +12,10 @@ final class RemoteDisplayIntegrationTests: XCTestCase {
         let url = try XCTUnwrap(viewer.url(profile: profile))
         let (data, response) = try await URLSession.shared.data(from: url)
         XCTAssertEqual((response as? HTTPURLResponse)?.statusCode, 200)
-        XCTAssertTrue(String(decoding: data, as: UTF8.self).contains("remote-video"))
+        let page = String(decoding: data, as: UTF8.self)
+        XCTAssertTrue(page.contains("Set up the Isaac Sim viewer"))
+        XCTAssertTrue(page.contains("installed separately"))
+        XCTAssertEqual((response as? HTTPURLResponse)?.mimeType, "text/html")
         XCTAssertTrue(url.fragment?.contains("example.org") == true)
         let unscoped = URL(string: "http://127.0.0.1:\(try XCTUnwrap(viewer.port))/index.html")!
         let (_, denied) = try await URLSession.shared.data(from: unscoped)
@@ -46,8 +49,11 @@ final class RemoteDisplayIntegrationTests: XCTestCase {
             XCTAssertLessThanOrEqual(web.bounds.width, width)
         }
         session.detachWindow(); XCTAssertTrue(session.detached)
-        try await Task.sleep(nanoseconds: 200_000_000)
-        XCTAssertTrue(web.window?.title.contains("Remote Display") == true)
+        try await wait { web.window?.title.contains("Remote Display") == true }
+        window.contentView?.layoutSubtreeIfNeeded()
+        try await Task.sleep(nanoseconds: 100_000_000)
+        XCTAssertTrue(web.window?.title.contains("Remote Display") == true,
+                      "The original workspace must not reclaim the detached viewer")
         XCTAssertGreaterThan(web.bounds.height, 200)
         XCTAssertGreaterThan(web.bounds.width, 400)
         XCTAssertTrue(session.web === web, "Detaching must move the live viewer, not create another client")

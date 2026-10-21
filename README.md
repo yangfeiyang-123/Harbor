@@ -4,6 +4,14 @@ A native macOS workbench for local and SSH projects, built with SwiftUI, AppKit,
 
 **Source version: 0.36.0 (build 78).** [中文](README.zh-CN.md) · [Releases](https://github.com/yangfeiyang-123/Harbor/releases)
 
+## Download and install
+
+[**Download Harbor 0.36.0 for Apple Silicon Mac**](https://github.com/yangfeiyang-123/Harbor/releases/tag/v0.36.0)
+
+Requires macOS 14 or later and an M1 or newer Mac. Open the DMG and drag Harbor into Applications, or extract the ZIP and move Harbor.app there. Quit an older Harbor before replacing it.
+
+This build is ad-hoc signed and is not Apple Developer ID notarized. If macOS blocks the first launch, try opening Harbor, then use **System Settings → Privacy & Security → Open Anyway** for the official download. See [installation instructions](docs/install-release.txt). The first Code-OSS workspace needs internet access to install its verified runtime; Python 3 is needed on the Mac for local workspaces or on the server for remote workspaces.
+
 ## Current workbench
 
 Code-OSS (with Open VSX extensions and its integrated terminal) is now Harbor's only editor; the earlier lightweight editor, its explorer and its previews were removed. Harbor itself contributes what Code-OSS does not have: servers, folder workspaces, windows, forwarding, remote display and appearance.
