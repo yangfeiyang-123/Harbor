@@ -1,8 +1,14 @@
 import AppKit
 import SwiftUI
+import HarborCore
 
 enum TerminalKeyboardCommand: Equatable {
     case close, move(Int), group(Int), rename, enterTerminal
+    /// For terminals that fill their page or window: the pane before or after this one (⌥⌘ with
+    /// an arrow, as in the editor's terminal), the tab before or after (⇧⌘[ and ⇧⌘]), a pane
+    /// under this one (⇧⌘D, beside ⌘D for one to the right), a new tab (⌘T), and closing the
+    /// pane in use with the key that closes anything (⌘W).
+    case pane(Int), tab(Int), split(TerminalSplitAxis), newTab, closePane
 
     static func groupIndex(for keyCode: UInt16) -> Int? {
         // Use physical keys, as with the mode shortcut, including numeric keypads.
@@ -10,12 +16,46 @@ enum TerminalKeyboardCommand: Equatable {
         let keypad: [UInt16] = [83, 84, 85, 86, 87, 88, 89, 91, 92]
         return numbers.firstIndex(of: keyCode) ?? keypad.firstIndex(of: keyCode)
     }
+    /// The letter a Command shortcut is meant by: the one on the key in the layout in use, as
+    /// the menu's shortcuts are, so ⌘W is the key marked W on AZERTY and Dvorak too. A layout
+    /// without Latin letters goes by the key's place on a US keyboard.
+    static func letter(_ event: NSEvent) -> String? {
+        if let typed = event.charactersIgnoringModifiers?.lowercased(), typed.count == 1, let scalar = typed.unicodeScalars.first,
+           scalar.isASCII, CharacterSet.lowercaseLetters.contains(scalar) { return typed }
+        return [13: "w", 2: "d", 17: "t"][event.keyCode]
+    }
+    /// Whether the event is the key a shortcut names by `character`: the key marked so in the
+    /// layout in use, as for the menu's shortcuts. A layout that has no such character on the key
+    /// (Cyrillic, Greek) goes by the key's place on a US keyboard.
+    static func isKey(_ event: NSEvent, _ character: String, code: UInt16) -> Bool {
+        if let typed = event.charactersIgnoringModifiers?.lowercased(), typed.count == 1, let scalar = typed.unicodeScalars.first,
+           scalar.isASCII, scalar.value > 32, scalar.value < 127 { return typed == character }
+        return event.keyCode == code
+    }
     static func matching(_ event: NSEvent) -> Self? {
         guard event.type == .keyDown else { return nil }
         let flags = event.modifierFlags.intersection(WorkspaceShortcut.modifierMask)
         if flags == .command {
             if event.keyCode == 51 || event.keyCode == 117 { return .close }
             if let index = groupIndex(for: event.keyCode) { return .group(index) }
+            switch letter(event) {
+            case "w": return .closePane
+            case "d": return .split(.columns)
+            case "t": return .newTab
+            default: break
+            }
+        } else if flags == [.command, .option] {
+            switch event.keyCode {
+            case 123, 126: return .pane(-1)
+            case 124, 125: return .pane(1)
+            default: break
+            }
+        } else if flags == [.command, .shift] {
+            switch event.keyCode {
+            case 33: return .tab(-1)            // [
+            case 30: return .tab(1)             // ]
+            default: if letter(event) == "d" { return .split(.rows) }
+            }
         } else if flags.isEmpty {
             switch event.keyCode {
             case 123, 126: return .move(-1)
@@ -43,7 +83,36 @@ extension AppStore {
         }
         let list = window.firstResponder as? TerminalListKeyView
         let listFocused = fileMode && currentFiles.terminalVisible && list?.scope == scope && list?.store === self
+        /// The terminal the keys are going to: the pane that has the keyboard, else the one selected.
+        var inUse: TerminalSession? {
+            let responder = window.firstResponder as? NSView
+            return terminalSessions(in: scope).first { session in
+                isTerminalPresented(session, in: scope) && responder.map { $0 === session.terminal || $0.isDescendant(of: session.terminal) } == true
+            } ?? selectedTerminal(in: scope)
+        }
         switch command {
+        case .pane, .tab, .split, .newTab, .closePane:
+            // Only where terminals are the whole page: the plain terminal page, and a terminal
+            // window for all but the keys it already has a meaning for (⌘W closes the window,
+            // ⌘T and ⌘D are its menu's). In the editor these keys are the editor's.
+            guard case .window(let id) = scope else { return false }
+            let plain = homeTerminalScopes.values.contains(id) && page == .terminal
+            switch command {
+            case .pane(let step): if !event.isARepeat { focusTerminalPane(step, in: scope) }
+            case .tab(let step): if !event.isARepeat { cycleTerminalGroup(step, in: scope) }
+            case .split(.rows): if !event.isARepeat { splitTerminal(.rows, session: inUse) }
+            case .split(.columns):
+                guard plain else { return false }
+                if !event.isARepeat { splitTerminal(.columns, session: inUse) }
+            case .newTab:
+                guard plain else { return false }
+                if !event.isARepeat { openIndependentTerminal(in: scope) }
+            case .closePane:
+                guard plain, let target = inUse else { return false }
+                if !event.isARepeat { close(target) }
+            default: return false
+            }
+            return true
         case .group(let index):
             guard !fileMode else { return false }
             let groups = arrangement(in: scope).groups
@@ -75,8 +144,7 @@ extension AppStore {
                 // Native focus can change before its queued selection callback.
                 // Close the pane the user actually clicked, never its sibling.
                 target = terminalSessions(in: scope).first { session in
-                    let visible = fileMode ? currentFiles.terminalVisible && selectedSessionID == session.id : arrangement(in: scope).visible?.contains(session.id) == true
-                    return visible && (responder === session.terminal || responder.isDescendant(of: session.terminal))
+                    isTerminalPresented(session, in: scope) && (responder === session.terminal || responder.isDescendant(of: session.terminal))
                 }
             } else { target = nil }
             guard let target else { return false }

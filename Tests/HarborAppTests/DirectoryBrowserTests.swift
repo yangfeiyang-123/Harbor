@@ -14,7 +14,7 @@ final class DirectoryBrowserTests: XCTestCase {
     @MainActor func testBrowseSuggestConfirmAndCancelPreserveWorkspace() async throws {
         _ = NSApplication.shared
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("harbor-browser-" + UUID().uuidString).resolvingSymlinksInPath()
-        let prefsName = "app.harbor.browser." + UUID().uuidString, prefs = UserDefaults(suiteName: prefsName)!
+        let prefsName = "app.harbor.browser." + UUID().uuidString, prefs = TestDefaults.suite(prefsName)!
         defer { try? FileManager.default.removeItem(at: root); prefs.removePersistentDomain(forName: prefsName) }
         for path in ["Current", "Next 项目/Child", ".hidden"] { try FileManager.default.createDirectory(at: root.appendingPathComponent(path), withIntermediateDirectories: true) }
         try Data("unchanged".utf8).write(to: root.appendingPathComponent("Current/file.txt"))
@@ -23,8 +23,6 @@ final class DirectoryBrowserTests: XCTestCase {
         defer { store.shutdown() }
         let result = await store.openDirectoryWorkspace(root.appendingPathComponent("Current").path, profile: nil)
         let first = try XCTUnwrap(result)
-        await first.open(try XCTUnwrap(first.entries[first.root]?.first))
-        first.currentDocument?.text = "draft stays here"
         store.chooseDirectoryWorkspace()
         let browser = try XCTUnwrap(store.directoryBrowser)
         browser.browse(browser.path)
@@ -35,7 +33,7 @@ final class DirectoryBrowserTests: XCTestCase {
         browser.browse(root.path); try await settled(browser)
         XCTAssertTrue(browser.folders.contains { $0.name == ".hidden" })
         XCTAssertTrue(browser.folders.allSatisfy(\.directory))
-        XCTAssertTrue(store.currentFiles === first); XCTAssertEqual(first.currentDocument?.text, "draft stays here")
+        XCTAssertTrue(store.currentFiles === first)
         browser.editPath(root.path + "/Next"); try await settled(browser)
         XCTAssertEqual(browser.folders.map(\.name), ["Next 项目"]); XCTAssertFalse(browser.canOpen)
         browser.browse(try XCTUnwrap(browser.folders.first).path); try await settled(browser)
@@ -51,7 +49,6 @@ final class DirectoryBrowserTests: XCTestCase {
         XCTAssertTrue(nextBrowser.canOpen)
         let opened = await store.openDirectoryWorkspace(try XCTUnwrap(nextBrowser.candidatePath), profile: nextBrowser.profile)
         XCTAssertEqual(opened?.root, root.path + "/Next 项目/Child")
-        XCTAssertEqual(first.currentDocument?.text, "draft stays here")
         XCTAssertEqual(try String(contentsOf: root.appendingPathComponent("Current/file.txt"), encoding: .utf8), "unchanged")
         let current = store.currentFiles
         nextBrowser.browse(root.path + "/missing"); try await settled(nextBrowser)

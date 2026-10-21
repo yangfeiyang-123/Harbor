@@ -27,6 +27,7 @@ jobs:
         run: |
           python3 Tests/terminal_host_test.py
           python3 scripts/test-workspace-runtime.py
+          bash scripts/test-code-workbench.sh
       - name: Build and verify application
         run: |
           bash scripts/build-app.sh release

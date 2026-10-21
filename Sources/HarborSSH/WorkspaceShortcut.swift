@@ -49,7 +49,9 @@ struct WorkspaceShortcut: Codable, Equatable {
             return "⌘\(index + 1) switches terminal workspaces. Choose another shortcut."
         }
         let reserved: [String: String] = [
-            "⌘D": "Split Right", "⌘H": "Split Down", "⌘T": "New Terminal", "⌘N": "New Window", "⌘W": "Close Window",
+            "⌘D": "Split Right", "⌘H": "Split Down", "⌘T": "New Terminal", "⌘N": "New Terminal Window", "⌘W": "Close",
+            "⌘O": "Open File", "⇧⌘N": "New Window", "⇧⌘X": "Extensions", "⌥⇧⌘W": "Folders in Windows",
+            "⇧⌘D": "Split Down", "⇧⌘[": "Previous Terminal Tab", "⇧⌘]": "Next Terminal Tab",
             "⌘Q": "Quit", "⌘S": "Save", "⌘F": "Find", "⌘J": "Terminal Panel", "⌘0": "Workbench", "⌘,": "Settings",
             "⌘C": "Copy", "⌘V": "Paste", "⌘X": "Cut", "⌘A": "Select All", "⌘Z": "Undo", "⇧⌘Z": "Redo",
             "⌘=": "Increase Font Size", "⌘-": "Decrease Font Size", "⇧⌘0": "Reset Font Size", "⇧⌘W": "Close Terminal", "⇧⌘O": "Go to Symbol",

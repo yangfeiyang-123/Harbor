@@ -7,21 +7,25 @@ enum WorkspaceTheme {
         let url = AppResources.directory("Themes").appendingPathComponent("cursor.json")
         return (try? JSONDecoder().decode([String: HarborTheme.Palette].self, from: Data(contentsOf: url))) ?? HarborTheme.palettes
     }()
-    static func native(_ role: String, dark: Bool) -> NSColor {
-        HarborTheme.hex(palettes[dark ? "dark" : "light"]!.colors[role] ?? "#808080")
+    static func native(_ role: String, dark: Bool, selection: String = HarborTheme.selection) -> NSColor {
+        // A family with palettes of its own is used as it is; the standard colors here are Cursor's.
+        let family = HarborTheme.family(selection)
+        let palette = (family.file == nil ? palettes : HarborTheme.lightAndDark(of: family))[dark ? "dark" : "light"]!
+        return HarborTheme.hex(palette.colors[role] ?? "#808080")
     }
     static func color(_ role: String) -> Color {
-        Color(nsColor: NSColor(name: NSColor.Name("Harbor.Code." + role)) { appearance in
-            native(role, dark: appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua)
+        let selected = HarborTheme.selection
+        return Color(nsColor: NSColor(name: NSColor.Name("Harbor.Code." + selected + "." + role)) { appearance in
+            native(role, dark: appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua, selection: selected)
         })
     }
-    static let background = color("editor.background")
-    static let sidebar = color("sideBar.background")
-    static let foreground = color("editor.foreground")
-    static let muted = color("descriptionForeground")
-    static let border = color("panel.border")
-    static let selection = color("list.activeSelectionBackground")
-    static let hover = color("list.hoverBackground")
+    static var background: Color { color("editor.background") }
+    static var sidebar: Color { color("sideBar.background") }
+    static var foreground: Color { color("editor.foreground") }
+    static var muted: Color { color("descriptionForeground") }
+    static var border: Color { color("panel.border") }
+    static var selection: Color { color("list.activeSelectionBackground") }
+    static var hover: Color { color("list.hoverBackground") }
 }
 
 struct WorkspaceIconButton: View {

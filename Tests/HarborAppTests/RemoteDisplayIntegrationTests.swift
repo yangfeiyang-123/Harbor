@@ -7,12 +7,12 @@ import HarborCore
 
 final class RemoteDisplayIntegrationTests: XCTestCase {
     @MainActor func testIsaacViewerServesOnlyTokenScopedBundledAssets() async throws {
-        let viewer = IsaacViewerServer(optionalViewerDirectory: URL(fileURLWithPath: "/tmp/harbor-missing-" + UUID().uuidString)); try await viewer.start(); defer { viewer.stop() }
+        let viewer = IsaacViewerServer(); try await viewer.start(); defer { viewer.stop() }
         var profile = RemoteDisplayProfile(); profile.address = "isaac://example.org:49100"; profile.name = "Robot & lab"
         let url = try XCTUnwrap(viewer.url(profile: profile))
         let (data, response) = try await URLSession.shared.data(from: url)
         XCTAssertEqual((response as? HTTPURLResponse)?.statusCode, 200)
-        XCTAssertTrue(String(decoding: data, as: UTF8.self).contains("Set up the Isaac Sim viewer"))
+        XCTAssertTrue(String(decoding: data, as: UTF8.self).contains("remote-video"))
         XCTAssertTrue(url.fragment?.contains("example.org") == true)
         let unscoped = URL(string: "http://127.0.0.1:\(try XCTUnwrap(viewer.port))/index.html")!
         let (_, denied) = try await URLSession.shared.data(from: unscoped)
@@ -24,7 +24,6 @@ final class RemoteDisplayIntegrationTests: XCTestCase {
     }
     @MainActor func testWebViewerInputResizeDetachAndRelease() async throws {
         _ = NSApplication.shared
-        NSApp.setActivationPolicy(.regular)
         var profile = RemoteDisplayProfile(); profile.useSSHTunnel = false
         profile.address = "http://127.0.0.1:1/"
         let session = RemoteDisplaySession(profile: profile)
@@ -47,7 +46,7 @@ final class RemoteDisplayIntegrationTests: XCTestCase {
             XCTAssertLessThanOrEqual(web.bounds.width, width)
         }
         session.detachWindow(); XCTAssertTrue(session.detached)
-        try await wait { web.window?.title.contains("Remote Display") == true }
+        try await Task.sleep(nanoseconds: 200_000_000)
         XCTAssertTrue(web.window?.title.contains("Remote Display") == true)
         XCTAssertGreaterThan(web.bounds.height, 200)
         XCTAssertGreaterThan(web.bounds.width, 400)

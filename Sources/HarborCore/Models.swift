@@ -121,6 +121,9 @@ public enum SSHArguments {
         }
         return a
     }
+    public static func check(_ p: ServerProfile, socket: String) -> [String] {
+        connection(p) + ["-S", socket, "-O", "check", "--", p.host]
+    }
     public static func probe(_ p: ServerProfile, socket: String, command: String = "printf HARBOR_SSH_READY") -> [String] {
         // ProxyCommand=false prevents an unhealthy socket from silently opening another TCP connection.
         ["-o", "ControlMaster=no", "-o", "ProxyCommand=false", "-o", "BatchMode=yes"] + common(p, socket: socket) + ["-T", "--", p.host, command]

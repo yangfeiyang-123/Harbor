@@ -10,9 +10,10 @@ This source snapshot includes local changes in:
 - `Sources/SwiftTerm/Apple/AppleTerminalView.swift`
 - `Sources/SwiftTerm/Mac/MacTerminalView.swift`
 - `Sources/SwiftTerm/Terminal.swift`
+- `Sources/SwiftTerm/TerminalRecoveryScrollback.swift`
 
 The terminal changes support Harbor's copy handling, current-directory tracking,
-and full-display invalidation. Keep these changes when updating SwiftTerm.
+full-display invalidation, and restoring text into scrollback without changing
+the live application's screen or input modes. Keep these changes when updating SwiftTerm.
 The original [MIT license](LICENSE) applies. Upstream repository history and
 generated build products are not vendored.
-

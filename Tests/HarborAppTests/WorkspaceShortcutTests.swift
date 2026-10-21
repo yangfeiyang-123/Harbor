@@ -26,12 +26,12 @@ final class WorkspaceShortcutTests: XCTestCase {
     @MainActor func testSettingsRecorderFitsAndUpdatesTheStoredShortcut() async throws {
         _ = NSApplication.shared
         let suite = "app.harbor.settings." + UUID().uuidString
-        let prefs = UserDefaults(suiteName: suite)!
-        prefs.set("dark", forKey: "appearance")
+        let prefs = TestDefaults.suite(suite)!
+        prefs.set("dark", forKey: "appearance"); prefs.set("shortcuts", forKey: "settingsTab")
         defer { prefs.removePersistentDomain(forName: suite) }
         let store = AppStore(workspaceDefaults: prefs)
         let hosting = NSHostingView(rootView: SettingsView().environmentObject(store).defaultAppStorage(prefs))
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 610, height: 740), styleMask: [.titled], backing: .buffered, defer: false)
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 930, height: 680), styleMask: [.titled], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false; window.contentView = hosting
         defer { window.contentView = nil; window.close() }
         try await Task.sleep(nanoseconds: 150_000_000); hosting.layoutSubtreeIfNeeded()
@@ -67,10 +67,10 @@ final class WorkspaceShortcutTests: XCTestCase {
         XCTAssertFalse(recorded.matches(try event(flags: [.command, .option])))
         XCTAssertFalse(recorded.matches(try event(code: 8)))
         let suite = "app.harbor.shortcut." + UUID().uuidString
-        let prefs = UserDefaults(suiteName: suite)!; defer { prefs.removePersistentDomain(forName: suite) }
+        let prefs = TestDefaults.suite(suite)!; defer { prefs.removePersistentDomain(forName: suite) }
         let custom = WorkspaceShortcut(key: "e", keyCode: 14, modifiers: NSEvent.ModifierFlags([.control, .option]).rawValue)
         prefs.set(custom.encoded, forKey: WorkspaceShortcut.preferenceKey)
-        let reopened = UserDefaults(suiteName: suite)!
+        let reopened = TestDefaults.suite(suite)!
         XCTAssertEqual(WorkspaceShortcut.decode(reopened.string(forKey: WorkspaceShortcut.preferenceKey)!), custom)
         XCTAssertEqual(WorkspaceShortcut.decode("broken preference"), .standard)
     }
@@ -97,7 +97,7 @@ final class WorkspaceShortcutTests: XCTestCase {
     }
     @MainActor func testOldOptionXPreferenceMigratesButCustomModeShortcutIsPreserved() throws {
         let suite = "app.harbor.shortcut-migration." + UUID().uuidString
-        let prefs = UserDefaults(suiteName: suite)!
+        let prefs = TestDefaults.suite(suite)!
         defer { prefs.removePersistentDomain(forName: suite) }
         prefs.set(WorkspaceShortcut.maximizeTerminal.encoded, forKey: WorkspaceShortcut.preferenceKey)
         _ = AppStore(workspaceDefaults: prefs)

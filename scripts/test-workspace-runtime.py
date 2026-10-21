@@ -13,6 +13,15 @@ class WorkspaceRuntimeTests(unittest.TestCase):
   self.assertEqual([x['name'] for x in json.loads(listing.stdout)['entries']],['dir',name])
   result=self.call('read',file,limit=len(data));self.assertEqual(result.stdout,data);self.assertEqual(result.returncode,0)
   self.assertNotEqual(self.call('read',file,limit=10).returncode,0)
+ def test_a_name_that_is_not_utf8_does_not_make_its_folder_unlistable(self):
+  try: os.close(os.open(os.fsencode(str(self.root))+b'/caf\xe9.txt',os.O_CREAT|os.O_WRONLY))
+  except OSError: self.skipTest('this filesystem only takes UTF-8 names')
+  (self.root/'plain.txt').touch()
+  listing=self.call('list',self.root);self.assertEqual(listing.returncode,0,listing.stderr)
+  # What the app's decoder is given: text that is valid UTF-8 and holds no lone surrogate.
+  entries=json.loads(listing.stdout.decode('utf-8'))['entries']
+  self.assertEqual([x['name'] for x in entries],['caf\ufffd.txt','plain.txt'])
+  self.assertNotIn(b'\\ud', listing.stdout)
  def test_save_conflict_symlink_mode_and_exclusive_create(self):
   file=self.root/'file.py';file.write_text('before');file.chmod(0o755);link=self.root/'link';link.symlink_to(file)
   digest=hashlib.sha256(b'before').hexdigest();payload=base64.b64encode('after 中文'.encode()).decode()
@@ -23,6 +32,14 @@ class WorkspaceRuntimeTests(unittest.TestCase):
   self.assertEqual(file.read_text(),'after 中文')
  def test_directory_not_read_as_file(self):
   self.assertNotEqual(self.call('read',self.root,limit=1024).returncode,0)
+ def test_html_assets_cannot_escape_preview_root(self):
+  site=self.root/'site';site.mkdir();asset=site/'chart.js';asset.write_bytes(b'window.loaded=true')
+  secret=self.root/'secret';secret.write_bytes(b'not public');(site/'escape.js').symlink_to(secret)
+  (site/'.env').write_bytes(b'hidden');(site/'alias.js').symlink_to(asset)
+  result=self.call('read',site/'alias.js',previewRoot=str(site),limit=1024)
+  self.assertEqual(result.returncode,0,result.stderr);self.assertEqual(result.stdout,asset.read_bytes())
+  for path in [secret,site/'escape.js',site/'.env',site]:
+   self.assertNotEqual(self.call('read',path,previewRoot=str(site),limit=1024).returncode,0)
  def test_refresh_batches_changed_directories_and_isolates_errors(self):
   logs=self.root/'logs';logs.mkdir();listing=json.loads(self.call('list',logs).stdout)
   directories=[dict(path=str(logs),stamp=listing['stamp']),dict(path=str(self.root/'missing'))]
@@ -38,6 +55,23 @@ class WorkspaceRuntimeTests(unittest.TestCase):
   result=json.loads(self.call('refresh',self.root,directories=[dict(path=str(logs),stamp=stamp)],files=[str(video)]).stdout)
   self.assertIsNone(result['directories'][0]['listing']);self.assertEqual(result['files'][0]['entry']['size'],22)
   self.assertNotEqual(self.call('refresh',self.root,directories=[dict(path=str(logs))]*33).returncode,0)
+ def test_html_media_ranges_are_bounded_versioned_and_confined(self):
+  site=self.root/'site';site.mkdir();video=site/'large.mp4';data=bytes(range(256))
+  with video.open('wb') as f:
+   f.write(data);f.seek(30*1024*1024);f.write(data)
+  result=self.call('preview-stat',video,previewRoot=str(site));self.assertEqual(result.returncode,0,result.stderr)
+  info=json.loads(result.stdout);self.assertEqual(info['size'],30*1024*1024+256)
+  def read(offset,count,version=info['version']):
+   return self.call('preview-read',video,previewRoot=str(site),offset=offset,count=count,version=version)
+  result=read(info['size']-256,256);self.assertEqual(result.returncode,0,result.stderr);self.assertEqual(result.stdout,data)
+  for offset,count in [(-1,1),(info['size'],1),(0,1024*1024+1),(0,0)]: self.assertNotEqual(read(offset,count).returncode,0)
+  self.assertNotEqual(read(0,1,'stale').returncode,0)
+  video.write_bytes(b'changed');self.assertNotEqual(read(0,1).returncode,0)
+  secret=self.root/'secret';secret.write_text('secret');(site/'escape.mp4').symlink_to(secret)
+  (site/'.env').write_text('hidden');os.mkfifo(site/'pipe.mp4')
+  for path in [secret,site/'escape.mp4',site/'.env',site/'pipe.mp4',site]:
+   self.assertNotEqual(self.call('preview-stat',path,previewRoot=str(site)).returncode,0)
+  self.assertNotEqual(self.call('preview-stat',video).returncode,0)
  def test_copy_move_rename_trash_and_conflicts(self):
   folder=self.root/"folder 中文 ' $(no)";folder.mkdir();(folder/'main.py').write_text('hello')
   destination=self.root/'destination';destination.mkdir()

@@ -9,7 +9,7 @@ final class TerminalDirectoryIntegrationTests: XCTestCase {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("harbor-terminal-directory-" + UUID().uuidString).resolvingSymlinksInPath()
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let suite = "app.harbor.tests." + UUID().uuidString
-        let prefs = UserDefaults(suiteName: suite)!
+        let prefs = TestDefaults.suite(suite)!
         addTeardownBlock { prefs.removePersistentDomain(forName: suite); try? FileManager.default.removeItem(at: root) }
         let store = AppStore(historyRoot: root.appendingPathComponent("app-data"), workspaceDefaults: prefs)
         try store.history.prepare(); store.loading = false
@@ -41,7 +41,7 @@ final class TerminalDirectoryIntegrationTests: XCTestCase {
         store.toggleFiles()
         XCTAssertFalse(files.enabled)
 
-        store.openWorkspaceTerminal()
+        store.openTerminal(store.selectedProfile)
         let tab = try XCTUnwrap(store.activeSession)
         XCTAssertEqual(tab.workingDirectory, directory.path)
         XCTAssertEqual(tab.tabTitle, directory.lastPathComponent)
@@ -98,7 +98,10 @@ final class TerminalDirectoryIntegrationTests: XCTestCase {
         let profile = ServerProfile(name: "A", host: "a.example.invalid")
         store.profiles = [profile]
         store.files(for: profile).root = "/work/selected"
+        // Opening a recent folder starts no terminal of Harbor's own: the editor has the workspace's.
         store.openRecent(RecentWorkspace(serverID: profile.id, serverName: profile.name))
+        XCTAssertTrue(store.sessions.isEmpty); XCTAssertEqual(store.page, .workspace)
+        store.openTerminal(profile, useWorkspaceDirectory: false)
         let session = try XCTUnwrap(store.activeSession)
         XCTAssertNil(session.workingDirectory)
         session.stop()

@@ -378,8 +378,22 @@ extension TerminalView {
     /// selection, scrollback or the remote process's window size.
     public func refreshDisplay() {
         resetCaches()
+        // Do not paint a half-written TUI frame while DEC mode 2026 is active.
+        // Ending the synchronized update (or its safety timeout) queues display.
+        guard !terminal.synchronizedOutputActive else {
+            terminal.updateFullScreen()
+            return
+        }
+        // Reattachment and RIS replace buffer geometry without a pixel resize.
+        // Recompute the viewport as well as glyphs; repainting alone is insufficient.
+        _ = processSizeChange(newSize: frame.size)
+        updateScroller()
+        updateCursorPosition()
         terminal.updateFullScreen()
         queuePendingDisplay()
+        #if os(macOS)
+        needsDisplay = true
+        #endif
     }
 
     /// Returns the underlying terminal emulator that the `TerminalView` is a view for

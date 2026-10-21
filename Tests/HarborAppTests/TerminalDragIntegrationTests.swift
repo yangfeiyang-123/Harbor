@@ -8,10 +8,10 @@ final class TerminalDragIntegrationTests: XCTestCase {
     @MainActor private func fixture() throws -> (AppStore, UserDefaults) {
         _ = NSApplication.shared
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("harbor-drag-" + UUID().uuidString)
-        let suite = "app.harbor.drag." + UUID().uuidString, prefs = UserDefaults(suiteName: suite)!
+        let suite = "app.harbor.drag." + UUID().uuidString, prefs = TestDefaults.suite(suite)!
         let store = AppStore(historyRoot: root, workspaceDefaults: prefs)
         try store.history.prepare(); store.loading = false; store.selectWorkspace(nil)
-        store.currentFiles.root = root.path; store.currentFiles.entries[root.path] = []
+        store.currentFiles.root = root.path
         addTeardownBlock { prefs.removePersistentDomain(forName: suite); try? FileManager.default.removeItem(at: root) }
         return (store, prefs)
     }
@@ -26,46 +26,6 @@ final class TerminalDragIntegrationTests: XCTestCase {
     }
     @MainActor private func settle(_ window: NSWindow) async throws {
         try await Task.sleep(nanoseconds: 250_000_000); window.contentView?.layoutSubtreeIfNeeded()
-    }
-    @MainActor func testDraggedGroupsAndRowsKeepLiveProcessesAndRestoreAcrossModes() async throws {
-        let (store, prefs) = try fixture(); defer { store.shutdown() }
-        store.openWorkspaceTerminal(); let first = try XCTUnwrap(store.activeSession)
-        store.splitTerminal(.columns); let second = try XCTUnwrap(store.activeSession)
-        let scope = store.currentTerminalScope, original = store.arrangement(in: scope)
-        let groupID = try XCTUnwrap(original.selectedGroup?.id)
-        store.openWorkspaceTerminal(); let third = try XCTUnwrap(store.activeSession)
-        let newGroup = try XCTUnwrap(store.arrangement(in: scope).selectedGroup?.id)
-        let pids = store.sessions.map { $0.terminal.process.shellPid }
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1100, height: 780), styleMask: [.titled, .resizable], backing: .buffered, defer: false)
-        window.isReleasedWhenClosed = false
-        window.contentView = NSHostingView(rootView: ContentView().environmentObject(store).defaultAppStorage(prefs))
-        defer { window.contentView = nil; window.close() }
-        try await settle(window)
-        try await drag(.group(newGroup, scope), store: store, onto: .group(groupID, scope), intent: .before)
-        XCTAssertEqual(store.arrangement(in: scope).groups.map(\.id), [newGroup, groupID])
-        XCTAssertEqual(store.arrangement(in: scope).groups.last?.layout, original.visible)
-        store.toggleFiles(); try await settle(window)
-        try await drag(.terminal(second.id, scope), store: store, onto: .list(third.id, scope), intent: .before)
-        try await settle(window)
-        XCTAssertEqual(store.arrangement(in: scope).sessionIDs, [second.id, third.id, first.id])
-        XCTAssertEqual(store.arrangement(in: scope).groups.first?.layout, original.visible)
-        let visible = store.sessions.filter { $0.terminal.isDescendant(of: window.contentView!) && !$0.terminal.isHiddenOrHasHiddenAncestor }
-        XCTAssertEqual(visible.map(\.id), [second.id], "The editor still shows just the selected terminal")
-        store.toggleFiles(); try await settle(window)
-        try await drag(.group(newGroup, scope), store: store, onto: .pane(second.id, scope), intent: .split(.rows, before: false))
-        try await settle(window)
-        let merged = store.arrangement(in: scope)
-        XCTAssertEqual(merged.groups.count, 1); XCTAssertEqual(merged.selectedGroup?.id, groupID)
-        XCTAssertEqual(merged.visible?.sessionIDs, [first.id, second.id, third.id])
-        for _ in 0..<3 {
-            store.toggleFiles(); try await settle(window)
-            XCTAssertEqual(store.sessions.filter { $0.terminal.isDescendant(of: window.contentView!) && !$0.terminal.isHiddenOrHasHiddenAncestor }.map(\.id), [third.id])
-            store.toggleFiles(); try await settle(window)
-            XCTAssertEqual(store.arrangement(in: scope), merged)
-        }
-        XCTAssertEqual(store.sessions.map { $0.terminal.process.shellPid }, pids)
-        XCTAssertTrue(store.sessions.allSatisfy { $0.terminal.process.running })
-        XCTAssertEqual(store.sessions.filter { $0.terminal.isDescendant(of: window.contentView!) && !$0.terminal.isHiddenOrHasHiddenAncestor }.count, 3)
     }
 
     @MainActor func testServerOrderIsSavedWithoutChangingProfilesOrSelection() async throws {
@@ -85,8 +45,8 @@ final class TerminalDragIntegrationTests: XCTestCase {
 
     @MainActor func testStaleForeignRemovedAndCrossScopeDragsDoNotMutateAnything() async throws {
         let (store, _) = try fixture(); defer { store.shutdown() }
-        store.openWorkspaceTerminal(); let first = try XCTUnwrap(store.activeSession)
-        store.openWorkspaceTerminal(); let second = try XCTUnwrap(store.activeSession)
+        store.openTerminal(store.selectedProfile); let first = try XCTUnwrap(store.activeSession)
+        store.openTerminal(store.selectedProfile); let second = try XCTUnwrap(store.activeSession)
         let scope = store.currentTerminalScope, before = store.arrangement(in: scope)
         let source = HarborDragSource.terminal(first.id, scope)
         let provider = store.dragProvider(source), item = try await HarborDragItem.read(provider, type: source.type)

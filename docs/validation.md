@@ -1,22 +1,24 @@
-# Release validation — 0.24.0
+# Validation of the 0.36.0 source update
 
-Validated on an Apple silicon Mac with Swift 6.4 and the macOS 27 SDK.
-The app deployment target is macOS 14; older supported macOS versions have
-not been physically retested for this public release.
+Prepared on 2026-10-21 from the local Harbor 0.36.0 (build 78) source.
+This updates source code and documentation; it does not publish a new binary release.
 
-- Swift tests: 174 total, 170 passed, 4 opt-in real-server tests skipped.
-- Remote PTY helper: 6 local lifecycle and transport tests passed.
-- File runtime: 6 file-operation tests passed.
-- A fresh release build from the public source completed.
-- Optional viewer fallback, user-installed assets, token-scoped access, and
-  rejection of symlinks outside the viewer directory are covered by tests.
-- Source distribution is checked for personal host/account fixtures, private
-  keys, tokens, app data, generated NVIDIA assets, and build caches.
+- Swift application and test targets compiled successfully with Apple Swift 6.4.
+- Core Swift run: 77 tests, 69 passed, 1 opt-in test skipped, 7 local gateway
+  fixture failures. All seven require binding a local socket in this restricted
+  execution environment; the fixture reports “Address already in use”.
+- Workspace runtime: 9 tests, 8 passed and 1 skipped.
+- Editor JavaScript checks: catalog (3), occlusion (5), settings (9) and terminal
+  (6) tests passed. Two pinned-runtime fixtures skipped without an explicitly
+  provided runtime. Navigation tests could not start their local HTTP bridge.
+- Full native UI and Python PTY/workbench runs were attempted. This environment
+  prohibits local socket listeners and some GUI services, so these runs do not
+  establish a full regression pass. The native run was interrupted when a GUI
+  service could not start.
+- Public source excludes local application state, dependency installs, backups,
+  sampling logs and the separately licensed, optionally installed NVIDIA viewer.
+  Managed proxy destinations and a server-password test fixture use examples.
 
-The Python PTY tests require local Unix-socket/PTY access. A restricted agent
-sandbox blocked their first run; the normal local environment passed all six.
-No production server settings were changed for publication.
-
-The tests do not constitute notarization, penetration testing, or validation
-on every remote operating system and simulator version. The initial downloadable
-app is ad-hoc signed and must be explicitly allowed by the user at first launch.
+The GitHub macOS workflows run the full Swift, PTY, file-runtime and editor
+checks, then build and verify the application archive. Their result must be
+checked separately; a successful local compile is not a full test pass.

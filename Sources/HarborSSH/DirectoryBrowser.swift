@@ -6,6 +6,8 @@ import HarborCore
 final class DirectoryBrowser: ObservableObject, Identifiable {
     let id = UUID()
     let profile: ServerProfile?
+    /// The folder is added to the library, not opened.
+    let adding: Bool
     @Published private(set) var path: String
     @Published private(set) var currentPath = ""
     @Published private(set) var folders: [WorkspaceEntry] = []
@@ -18,8 +20,8 @@ final class DirectoryBrowser: ObservableObject, Identifiable {
     private var request: Task<Void, Never>?
     private var generation = UUID()
 
-    init(profile: ServerProfile?, path: String, list: @escaping (String) async throws -> WorkspaceListing) {
-        self.profile = profile
+    init(profile: ServerProfile?, path: String, adding: Bool = false, list: @escaping (String) async throws -> WorkspaceListing) {
+        self.profile = profile; self.adding = adding
         self.path = path.isEmpty ? "~/" : (path.hasSuffix("/") ? path : path + "/")
         self.list = list
     }
@@ -82,8 +84,8 @@ struct DirectoryBrowserView: View {
         VStack(alignment: .leading, spacing: 16) {
             HStack {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("Open Folder").harborFont(20, weight: .semibold)
-                    Label(browser.profile?.name ?? "Local", systemImage: browser.profile?.displayIcon ?? "laptopcomputer")
+                    Text(browser.adding ? "Add Folder to Library" : "Open Folder").harborFont(20, weight: .semibold)
+                    Label(browser.profile?.name ?? LocalMachine.name, systemImage: browser.profile?.displayIcon ?? "laptopcomputer")
                         .harborFont(12).foregroundStyle(Color.harborMuted)
                 }
                 Spacer()
@@ -94,7 +96,7 @@ struct DirectoryBrowserView: View {
                 TextField("Folder path", text: Binding(get: { browser.path }, set: browser.editPath))
                     .textFieldStyle(HarborTextFieldStyle()).focused($pathFocused).onSubmit { browser.submitPath() }
                     .accessibilityIdentifier("directory-browser-path")
-                if browser.loading { ProgressView().controlSize(.small).frame(width: 22) }
+                if browser.loading { HarborProgressBar(width: 36) }
             }
             ScrollView {
                 LazyVStack(spacing: 2) {
@@ -122,10 +124,11 @@ struct DirectoryBrowserView: View {
                 .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.harborBorder, lineWidth: 1))
                 .accessibilityIdentifier("directory-browser-folders")
             HStack {
-                Text("Browse folders, then confirm to open a workspace.").harborFont(11).foregroundStyle(Color.harborMuted)
+                Text(browser.adding ? "Type a path or browse. It opens once it is put in a window."
+                     : "Browse folders, then confirm to open a workspace.").harborFont(11).foregroundStyle(Color.harborMuted)
                 Spacer()
                 Button("Cancel") { browser.cancel(); dismiss() }.keyboardShortcut(.cancelAction)
-                Button(browser.opening ? "Opening…" : "Open Folder") { confirm() }.buttonStyle(.borderedProminent)
+                Button(browser.adding ? "Add to Library" : browser.opening ? "Opening…" : "Open Folder") { confirm() }.buttonStyle(.borderedProminent)
                     .keyboardShortcut(.defaultAction).disabled(!browser.canOpen).accessibilityIdentifier("directory-browser-confirm")
             }
         }.padding(22).frame(width: 620, height: 520).harborFont(12)
@@ -139,6 +142,10 @@ struct DirectoryBrowserView: View {
     }
     private func confirm() {
         guard browser.canOpen, let path = browser.candidatePath else { return }
+        if browser.adding {
+            if store.addToLibrary(path, profile: browser.profile) != nil { dismiss() } else { browser.error = "Unable to add this folder." }
+            return
+        }
         browser.opening = true
         Task {
             let opened = await store.openDirectoryWorkspace(path, profile: browser.profile)

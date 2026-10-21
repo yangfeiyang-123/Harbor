@@ -19,30 +19,9 @@ final class WorkspaceFileTests: XCTestCase {
         XCTAssertTrue(listing.entries[0].directory)
         let hidden = try await service.list(root.path, showHidden: true)
         XCTAssertEqual(hidden.entries.count, 3)
-        let file = try await service.materialize(listing.entries[1], limit: 100)
-        XCTAssertEqual(try Data(contentsOf: file), Data("hello".utf8))
     }
-    func testLocalSaveRejectsConflictAndPreservesSymlinkAndMode() async throws {
-        let root = try temporary(), cache = try temporary(), target = root.appendingPathComponent("target.py"), link = root.appendingPathComponent("link.py")
-        let initial = Data("print('初始')\n".utf8)
-        try initial.write(to: target); try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: target.path)
-        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: target)
-        let service = WorkspaceFileService(profile: nil, socket: nil, script: "", cache: cache)
-        _ = try await service.save(path: link.path, text: "print('changed')\n", expectedDigest: WorkspacePath.digest(initial))
-        XCTAssertEqual(try String(contentsOf: target, encoding: .utf8), "print('changed')\n")
-        XCTAssertEqual(try FileManager.default.destinationOfSymbolicLink(atPath: link.path), target.path)
-        XCTAssertEqual(try FileManager.default.attributesOfItem(atPath: target.path)[.posixPermissions] as? Int, 0o755)
-        do { _ = try await service.save(path: link.path, text: "overwrite", expectedDigest: WorkspacePath.digest(initial)); XCTFail("Must reject conflict") }
-        catch { XCTAssertTrue(error.localizedDescription.contains("Another application changed")) }
-        XCTAssertEqual(try String(contentsOf: target, encoding: .utf8), "print('changed')\n")
-    }
-    func testCreateDoesNotOverwriteAndRejectsTraversal() async throws {
-        let root = try temporary(), cache = try temporary(), service = WorkspaceFileService(profile: nil, socket: nil, script: "", cache: try temporary())
-        _ = cache
-        try await service.create(name: "new.py", parent: root.path, directory: false)
-        try Data("keep".utf8).write(to: root.appendingPathComponent("new.py"))
-        do { try await service.create(name: "new.py", parent: root.path, directory: false); XCTFail("Must not overwrite") } catch { }
-        XCTAssertEqual(try String(contentsOf: root.appendingPathComponent("new.py"), encoding: .utf8), "keep")
+    func testChildPathsRejectTraversal() throws {
+        let root = try temporary()
         for name in ["../escape", "/absolute", "", ".", "..", "new\nline"] { XCTAssertThrowsError(try WorkspacePath.child(name, in: root.path)) }
     }
     func testTerminalDirectoryIsSafelyQuotedAndLegacyRecordLoads() throws {
@@ -62,14 +41,6 @@ final class WorkspaceFileTests: XCTestCase {
         try await FileProcess.run("/bin/sh", arguments: ["-c", "cat; printf diagnostic >&2"], input: data, output: output, timeout: 5)
         XCTAssertEqual(try Data(contentsOf: output), data)
     }
-    func testPreviewRejectsOversizedFilesBeforeCopying() async throws {
-        let root = try temporary(), cache = try temporary(), url = root.appendingPathComponent("huge.py")
-        try Data(repeating: 97, count: 1024).write(to: url)
-        let service = WorkspaceFileService(profile: nil, socket: nil, script: "", cache: cache)
-        let entries = try await service.list(root.path)
-        do { _ = try await service.materialize(entries.entries[0], limit: 10); XCTFail("Must refuse oversized preview") } catch { }
-        XCTAssertTrue(try FileManager.default.contentsOfDirectory(atPath: cache.path).isEmpty)
-    }
     func testCancelledFileProcessStopsPromptly() async throws {
         let root = try temporary()
         let started = Date()
@@ -79,23 +50,6 @@ final class WorkspaceFileTests: XCTestCase {
         do { try await task.value; XCTFail("A cancelled directory request must stop its SSH channel") }
         catch { XCTAssertTrue(error is CancellationError) }
         XCTAssertLessThan(Date().timeIntervalSince(started), 4)
-    }
-    func testUnchangedDirectoryRefreshOmitsListingButStatsSelectedFile() async throws {
-        let root = try temporary(), cache = try temporary()
-        let file = root.appendingPathComponent("result.mp4")
-        try Data("first".utf8).write(to: file)
-        let service = WorkspaceFileService(profile: nil, socket: nil, script: "", cache: cache)
-        let initial = try await service.list(root.path)
-        let unchanged = try await service.refresh([.init(path: root.path, stamp: initial.stamp)], files: [file.path])
-        XCTAssertNil(unchanged.directories.first?.listing)
-        XCTAssertEqual(unchanged.files.first?.entry?.size, 5)
-        try Data("more output".utf8).write(to: file)
-        let altered = try await service.refresh([.init(path: root.path, stamp: initial.stamp)], files: [file.path])
-        XCTAssertEqual(altered.files.first?.entry?.size, 11)
-        try Data().write(to: root.appendingPathComponent("new-video.mp4"))
-        let refreshed = try await service.refresh([.init(path: root.path, stamp: initial.stamp), .init(path: root.appendingPathComponent("missing").path)])
-        XCTAssertEqual(refreshed.directories.first?.listing?.entries.count, 2)
-        XCTAssertNotNil(refreshed.directories.last?.error)
     }
     func testTmuxFallbackAndArgumentsUseTheSameQuotedDirectory() async throws {
         let root = try temporary(), folder = root.appendingPathComponent("中文 ' project")

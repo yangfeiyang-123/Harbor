@@ -1,5 +1,15 @@
 import Foundation
 
+/// This Mac, where servers are named: its host name ("Felix-Pro"), the one a shell prompt shows.
+public enum LocalMachine {
+    public static var name: String = {
+        var buffer = [CChar](repeating: 0, count: 256)
+        guard gethostname(&buffer, buffer.count - 1) == 0 else { return "Local" }
+        let host = String(cString: buffer).split(separator: ".").first.map(String.init) ?? ""
+        return host.isEmpty || host == "localhost" ? "Local" : host
+    }()
+}
+
 public struct RecentWorkspace: Codable, Identifiable, Equatable, Sendable {
     public var serverID: UUID?
     public var serverName: String
@@ -8,7 +18,7 @@ public struct RecentWorkspace: Codable, Identifiable, Equatable, Sendable {
     public var tmuxName: String?
     public var id: String { (serverID?.uuidString ?? "local") + "\n" + (directory ?? "") }
     public var title: String {
-        guard let directory, directory != "/", directory != "~" else { return serverName }
+        guard let directory, directory != "/", directory != "~" else { return serverID == nil ? LocalMachine.name : serverName }
         return (directory as NSString).lastPathComponent
     }
     public init(serverID: UUID?, serverName: String, directory: String? = nil, openedAt: Date = Date(), tmuxName: String? = nil) {
@@ -41,7 +51,7 @@ public struct RecentWorkspaceGroup: Identifiable, Sendable {
 
     /// Follow the user's server order and keep each server's newest entries first.
     public static func make(_ entries: [RecentWorkspace], profiles: [ServerProfile], query: String = "") -> [Self] {
-        let servers: [(UUID?, String)] = profiles.map { ($0.id, $0.name) } + [(nil, "Local")]
+        let servers: [(UUID?, String)] = profiles.map { ($0.id, $0.name) } + [(nil, LocalMachine.name)]
         return servers.compactMap { id, name in
             let matches = entries.filter { item in
                 item.serverID == id && (query.isEmpty || (item.title + " " + name + " " + (item.directory ?? "")).localizedCaseInsensitiveContains(query))

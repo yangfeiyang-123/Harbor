@@ -8,7 +8,7 @@ let package = Package(
     dependencies: [.package(path: "vendor/SwiftTerm")],
     targets: [
         .target(name: "HarborCore"),
-        .executableTarget(name: "HarborSSH", dependencies: ["HarborCore", .product(name: "SwiftTerm", package: "SwiftTerm")], resources: [.copy("Resources/Editor"), .copy("Resources/WorkspaceRuntime"), .copy("Resources/Themes"), .copy("Resources/Simulation")]),
+        .executableTarget(name: "HarborSSH", dependencies: ["HarborCore", .product(name: "SwiftTerm", package: "SwiftTerm")], resources: [.copy("Resources/WorkspaceRuntime"), .copy("Resources/ProxyRuntime"), .copy("Resources/Themes"), .copy("Resources/Simulation"), .copy("Resources/CodeWorkbench")]),
         .testTarget(name: "HarborCoreTests", dependencies: ["HarborCore"]),
         .testTarget(name: "HarborAppTests", dependencies: ["HarborSSH"])
     ],

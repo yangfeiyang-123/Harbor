@@ -56,8 +56,8 @@
       "editorWidget.background": "#141414",
       "editorWidget.border": "#2A2B2CFF",
       "editorWidget.foreground": "#bfbfbf",
-      "editor.findMatchBackground": "#88C0D066",
-      "editor.findMatchHighlightBackground": "#88C0D044",
+      "editor.findMatchBackground": "#715528",
+      "editor.findMatchHighlightBackground": "#514432",
       "editorBracketMatch.background": "#F0F0F01E",
       "editorBracketMatch.border": "#14141400",
       "terminal.background": "#141414",
@@ -263,7 +263,9 @@
       "minimap.selectionHighlight": "#F0F0F011",
       "minimap.errorHighlight": "#CD2A4F",
       "minimap.warningHighlight": "#ea7620",
-      "minimap.background": "#181818"
+      "minimap.background": "#181818",
+      "editor.findMatchBorder": "#FFCC66",
+      "editor.findMatchHighlightBorder": "#88714C"
     },
     "syntax": {
       "comment": "#F0F0F099",
@@ -357,8 +359,8 @@
       "editorWidget.background": "#F3F3F3",
       "editorWidget.border": "#E4E5E6FF",
       "editorWidget.foreground": "#141414BD",
-      "editor.findMatchBackground": "#3B7E843D",
-      "editor.findMatchHighlightBackground": "#3B7E8424",
+      "editor.findMatchBackground": "#FFCE73",
+      "editor.findMatchHighlightBackground": "#FFEBC1",
       "editorBracketMatch.background": "#14141424",
       "editorBracketMatch.border": "#FCFCFC00",
       "terminal.background": "#F3F3F3",
@@ -598,7 +600,9 @@
       "minimap.foregroundOpacity": "#141414",
       "minimapSlider.background": "#1414140F",
       "minimapSlider.hoverBackground": "#14141414",
-      "minimapSlider.activeBackground": "#14141424"
+      "minimapSlider.activeBackground": "#14141424",
+      "editor.findMatchBorder": "#935514",
+      "editor.findMatchHighlightBorder": "#C4A268"
     },
     "syntax": {
       "comment": "#14141499",

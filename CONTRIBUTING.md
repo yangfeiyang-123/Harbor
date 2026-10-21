@@ -14,7 +14,8 @@ Use an isolated `HARBOR_DATA_DIR` for manual development. Tests create their own
 temporary fixtures. Real-server tests require explicit opt-in; do not put live
 credentials or personal server configurations into tests or the repository.
 
-The bundled editor must be rebuilt when changing `Editor/editor.js`. Preserve
+Code-OSS is installed on demand. Run the workbench Python and JavaScript checks
+when changing `Sources/HarborSSH/Resources/CodeWorkbench/`. Preserve
 third-party notices and the [SwiftTerm patch notes](vendor/SwiftTerm/HARBOR.md).
 Never commit `node_modules`, compiled NVIDIA viewer assets, or app data.
 

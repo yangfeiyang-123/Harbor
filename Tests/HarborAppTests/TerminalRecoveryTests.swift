@@ -8,7 +8,7 @@ final class TerminalRecoveryTests: XCTestCase {
         _ = NSApplication.shared
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("harbor-recovery-" + UUID().uuidString)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-        let suite = "harbor.recovery." + UUID().uuidString, prefs = UserDefaults(suiteName: suite)!
+        let suite = "harbor.recovery." + UUID().uuidString, prefs = TestDefaults.suite(suite)!
         let store = AppStore(historyRoot: root.appendingPathComponent("state"), workspaceDefaults: prefs)
         try store.history.prepare(); store.loading = false; store.selectWorkspace(nil); store.currentFiles.root = root.path
         addTeardownBlock { prefs.removePersistentDomain(forName: suite); try? FileManager.default.removeItem(at: root) }
@@ -89,6 +89,8 @@ final class TerminalRecoveryTests: XCTestCase {
         await store.restoreTerminals()
         XCTAssertFalse(store.recoveryWritable); XCTAssertNotNil(store.errorMessage)
         XCTAssertFalse(store.checkpointTerminals(synchronously: true))
+        // Nothing is written, and that is no reason to refuse to quit: Harbor could only be force-quit.
+        XCTAssertFalse(store.terminalsUnsavedAtQuit())
         store.shutdown()
         XCTAssertEqual(try String(contentsOf: path), "broken recovery data")
     }
@@ -130,7 +132,7 @@ final class TerminalRecoveryTests: XCTestCase {
         XCTAssertEqual(restored.sessions.first?.windowID,windowID)
         XCTAssertEqual(restored.arrangement(in:.window(windowID)).sessionIDs,[s.id])
     }
-    @MainActor func testNormalLaunchRestoresBeforeShowingWorkspaceAndSavedOutputMenuWorks() async throws {
+    @MainActor func testNormalLaunchRestoresTerminalsBehindStartPageAndSavedOutputMenuWorks() async throws {
         let (store, _, prefs) = try fixture()
         store.profiles = [ServerProfile(name: "QA",host: "harbor-recovery.example.invalid")]
         store.save()
@@ -138,7 +140,8 @@ final class TerminalRecoveryTests: XCTestCase {
         store.shutdown()
         let restored = AppStore(historyRoot:store.history.root,workspaceDefaults:prefs)
         await restored.load(); defer { restored.shutdown() }
-        XCTAssertFalse(restored.loading); XCTAssertEqual(restored.page,.workspace)
+        // Launch always lands on the start page; the restored terminal is selected behind it.
+        XCTAssertFalse(restored.loading); XCTAssertEqual(restored.page,.recent)
         let loaded = try XCTUnwrap(restored.activeSession)
         XCTAssertEqual(loaded.id,s.id); XCTAssertFalse(loaded.started)
         XCTAssertFalse(restored.profiles[0].useTmux)

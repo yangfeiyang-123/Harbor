@@ -12,7 +12,7 @@ final class RecentWorkspaceIntegrationTests: XCTestCase {
         let legacy = SessionRecord(serverID: nil, serverName: "Local", title: "Legacy")
         try history.write([legacy], name: "history.json")
         let original = try Data(contentsOf: root.appendingPathComponent("history.json"))
-        let suite = "app.harbor.tests." + UUID().uuidString, prefs = UserDefaults(suiteName: suite)!
+        let suite = "app.harbor.tests." + UUID().uuidString, prefs = TestDefaults.suite(suite)!
         defer { prefs.removePersistentDomain(forName: suite) }
         let store = AppStore(historyRoot: root, workspaceDefaults: prefs)
         var profile = ServerProfile(name: "A", host: "example.invalid"); profile.recordOutput = true

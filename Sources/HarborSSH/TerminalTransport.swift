@@ -1,5 +1,6 @@
 import Foundation
 import Darwin
+import HarborCore
 
 /// A tiny child mode of the signed app: one local PTY, an SSH pipe, and the
 /// existing remote PTY. SSH gets no login tty for syslog/wall to write into.
@@ -20,6 +21,28 @@ enum TerminalTransport {
         var result = Data([kind])
         withUnsafeBytes(of: &size) { result.append(contentsOf: $0) }
         result.append(data); return result
+    }
+
+    /// Standard output is the terminal this runs in, the same open file as standard input, which
+    /// is read without blocking once the remote shell is ready. So a write can be told to try
+    /// again when the terminal is not being read fast enough (a burst of output): that is waited
+    /// for here. Taken as an error it ended the transport, and the pane with it.
+    static func writeOutput(_ data: Data, to descriptor: Int32 = STDOUT_FILENO) throws {
+        try data.withUnsafeBytes { (buffer: UnsafeRawBufferPointer) in
+            var offset = 0
+            while offset < buffer.count {
+                let count = Darwin.write(descriptor, buffer.baseAddress! + offset, buffer.count - offset)
+                if count > 0 { offset += count; continue }
+                if count < 0, errno == EINTR { continue }
+                if count < 0, errno == EAGAIN {
+                    var watch = pollfd(fd: descriptor, events: Int16(POLLOUT), revents: 0)
+                    _ = poll(&watch, 1, 1000)
+                    if stopping { throw POSIXError(.EIO) }
+                    continue
+                }
+                throw POSIXError(.EIO)
+            }
+        }
     }
 
     static func run(arguments: [String], token: String) throws -> Int32 {
@@ -75,7 +98,7 @@ enum TerminalTransport {
                     var rawOutput = original; rawOutput.c_oflag &= ~tcflag_t(OPOST)
                     _ = tcsetattr(STDIN_FILENO, TCSANOW, &rawOutput); outputIsRaw = true
                 }
-                try FileHandle.standardOutput.write(contentsOf: data)
+                try writeOutput(data)
                 if !ready {
                     tail.append(data)
                     if tail.range(of: marker) != nil {
@@ -105,7 +128,8 @@ enum TerminalTransport {
             let deadline = Date().addingTimeInterval(2)
             while ssh.isRunning && Date() < deadline { Thread.sleep(forTimeInterval: 0.02) }
         }
-        return ssh.isRunning ? 1 : ssh.terminationStatus
+        // Ended by a signal is not a status of the command on the server, where 3 says its shell is gone.
+        return ssh.isRunning || ssh.terminationReason == .uncaughtSignal ? 1 : ssh.terminationStatus
     }
 }
 
@@ -119,6 +143,10 @@ enum HarborMain {
                 try? FileHandle.standardError.write(contentsOf: Data(("Harbor: " + error.localizedDescription + "\n").utf8))
                 exit(1)
             }
+        }
+        // Run by ssh, from a terminal of Harbor's, as its askpass program: one question, one answer.
+        if arguments.count == 2, let value = ProcessInfo.processInfo.environment[ServerPasswords.variable] {
+            exit(ServerPasswords.askpass(question: arguments[1], value: value))
         }
         HarborApp.main()
     }

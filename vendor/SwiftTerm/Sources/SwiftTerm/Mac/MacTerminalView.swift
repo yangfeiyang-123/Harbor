@@ -1551,6 +1551,8 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
 
     private var pendingKittyKeyEvent: PendingKittyKeyEvent?
     private var kittyIsComposing = false
+    private var interpretingKeyCode: UInt16?
+    private var compositionKeyCodes: Set<UInt16> = []
     
     //
     // We capture a handful of keydown events and pre-process those, and then let
@@ -1567,6 +1569,21 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     public override func keyDown(with event: NSEvent) {
         selection.active = false
         let eventFlags = event.modifierFlags
+        // Remember IME-owned presses until their matching release. A commit
+        // clears marked text before keyUp, but that does not make the release
+        // an independent key event for the terminal application.
+        compositionKeyCodes.remove(event.keyCode)
+        interpretingKeyCode = event.keyCode
+        defer { interpretingKeyCode = nil }
+
+        // Candidate navigation/commit belongs to the input method, even when
+        // the TUI enabled Kitty keyboard reporting. Never also encode that key.
+        if hasMarkedText() {
+            compositionKeyCodes.insert(event.keyCode)
+            pendingKittyKeyEvent = nil
+            interpretKeyEvents([event])
+            return
+        }
 
         if terminal.keyboardEnhancementFlags.isEmpty,
            eventFlags.contains(.command),
@@ -1636,6 +1653,9 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
 
             pendingKittyKeyEvent = PendingKittyKeyEvent(event: event, eventType: textEventType)
             interpretKeyEvents([event])
+            // An input-source switch can commit later, outside this keyDown.
+            // It must not inherit a previous physical key or its modifiers.
+            pendingKittyKeyEvent = nil
             return
         }
         
@@ -1734,6 +1754,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     }
 
     public override func keyUp(with event: NSEvent) {
+        if compositionKeyCodes.remove(event.keyCode) != nil || hasMarkedText() { return }
         let flags = terminal.keyboardEnhancementFlags
         if flags.contains(.reportEvents) {
             let hasAltOrCtrl = event.modifierFlags.contains(.control) || (optionAsMetaKey && event.modifierFlags.contains(.option))
@@ -1752,6 +1773,9 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     }
     
     public override func doCommand(by selector: Selector) {
+        // Commands received while preedit is active concern that temporary
+        // text, never the shell's already committed input.
+        guard !hasMarkedText() else { return }
         if !terminal.keyboardEnhancementFlags.isEmpty || !kittyIsComposing {
             let mods: KittyKeyboardModifiers
             if let pending = pendingKittyKeyEvent {
@@ -1873,18 +1897,38 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     }
     
     func insertText(_ string: Any, replacementRange: NSRange, isPaste: Bool) {
+        let wasComposing = hasMarkedText() || kittyIsComposing
+        let committed = (string as? NSAttributedString)?.string ?? (string as? String)
         markedTextStorage = nil
         markedSelectedRange = NSRange(location: NSNotFound, length: 0)
+        kittyIsComposing = false
         updateMarkedTextOverlay()
-        if let str = string as? NSString {
-            if !terminal.keyboardEnhancementFlags.isEmpty {
-                if isPaste, terminal.bracketedPasteMode {
-                    pendingKittyKeyEvent = nil
+        if let str = committed as NSString?, str.length > 0 {
+            // Paste is text, never a physical key. Kitty report-all-keys must
+            // not encode it as CSI 0 u when bracketed paste is disabled.
+            if isPaste {
+                pendingKittyKeyEvent = nil
+                if terminal.bracketedPasteMode {
                     send(data: EscapeSequences.bracketedPasteStart[0...])
-                    send (txt: str as String)
-                    send(data: EscapeSequences.bracketedPasteEnd[0...])
-                    return
                 }
+                send(txt: str as String)
+                if terminal.bracketedPasteMode {
+                    send(data: EscapeSequences.bracketedPasteEnd[0...])
+                }
+                return
+            }
+            if wasComposing || pendingKittyKeyEvent == nil {
+                if wasComposing, let keyCode = interpretingKeyCode {
+                    compositionKeyCodes.insert(keyCode)
+                }
+                // Input-source changes can unmark first and commit later.
+                // Such text has no physical key to encode, and report-all-keys
+                // without associated text would otherwise turn it into CSI 0 u.
+                pendingKittyKeyEvent = nil
+                send(txt: str as String)
+                return
+            }
+            if !terminal.keyboardEnhancementFlags.isEmpty {
                 let pendingEvent = pendingKittyKeyEvent
                 pendingKittyKeyEvent = nil
                 kittyIsComposing = false
@@ -1922,13 +1966,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
                 _ = sendKittyEvent(kittyEvent)
                 return
             }
-            if isPaste, terminal.bracketedPasteMode {
-                send(data: EscapeSequences.bracketedPasteStart[0...])
-            }
             send (txt: str as String)
-            if isPaste, terminal.bracketedPasteMode {
-                send(data: EscapeSequences.bracketedPasteEnd[0...])
-            }
         }
         // TODO: I do not think we actually need this needsDisplay, the data fed should bubble this up
         // needsDisplay = true
@@ -1957,8 +1995,14 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         default:
             markedTextStorage = nil
         }
-        markedSelectedRange = selectedRange
-        kittyIsComposing = true
+        let length = markedTextStorage?.length ?? 0
+        let start = min(selectedRange.location == NSNotFound ? length : selectedRange.location, length)
+        markedSelectedRange = NSRange(location: start, length: min(selectedRange.length, length - start))
+        kittyIsComposing = length > 0
+        if kittyIsComposing, let keyCode = interpretingKeyCode {
+            compositionKeyCodes.insert(keyCode)
+        }
+        pendingKittyKeyEvent = nil
         updateMarkedTextOverlay()
     }
 
@@ -2426,29 +2470,19 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         markedTextStorage = nil
         markedSelectedRange = NSRange(location: NSNotFound, length: 0)
         kittyIsComposing = false
+        pendingKittyKeyEvent = nil
         updateMarkedTextOverlay()
     }
     
     // NSTextInputClient protocol implementation
     open func selectedRange() -> NSRange {
-        if let selection = self.selection, selection.active {
-            let displayBuffer = terminal.displayBuffer
-            var startLocation = (selection.start.row * displayBuffer.rows) + selection.start.col
-            var endLocation = (selection.end.row * displayBuffer.rows) + selection.end.col
-            if startLocation > endLocation {
-                swap(&startLocation, &endLocation)
-            }
-            let length = endLocation - startLocation
-            if length > 0 {
-                return NSRange(location: startLocation, length: length)
-            }
-        }
-        // Return the cursor position as a zero-length selection (insertion point).
-        // The input system needs a valid location to anchor dictation and IME input.
-        let cursorLocation = terminal.buffer.y * terminal.cols + terminal.buffer.x
-        return NSRange(location: cursorLocation, length: 0)
+        // The IME edits only the temporary composition string (UTF-16 offsets).
+        // Terminal screen cells and scrollback selection are not editable text:
+        // exposing their cursor offsets asks macOS to replace/recommit old input.
+        if markedTextStorage != nil { return markedSelectedRange }
+        return NSRange(location: NSNotFound, length: 0)
     }
-    
+
     // NSTextInputClient protocol implementation
     open func markedRange() -> NSRange {
         guard let marked = markedTextStorage else {
@@ -2464,6 +2498,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     
     // NSTextInputClient protocol implementation
     open func attributedSubstring(forProposedRange range: NSRange, actualRange: NSRangePointer?) -> NSAttributedString? {
+        actualRange?.pointee = .empty
         // Return the marked text when the requested range overlaps it.
         if let marked = markedTextStorage, range.location != NSNotFound, range.location < marked.length {
             let clampedLength = min(range.length, marked.length - range.location)

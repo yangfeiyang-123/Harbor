@@ -1,0 +1,111 @@
+{
+  "title": "Harbor",
+  "order": 8,
+  "properties": {
+    "harbor.appearance": {
+      "type": "string",
+      "default": "anthropic",
+      "enum": [
+        "system",
+        "light",
+        "dark",
+        "anthropic",
+        "anthropic-light",
+        "anthropic-dark",
+        "tide",
+        "tide-light",
+        "tide-dark",
+        "kelp",
+        "kelp-light",
+        "kelp-dark",
+        "dusk",
+        "dusk-light",
+        "dusk-dark",
+        "fog",
+        "fog-light",
+        "fog-dark",
+        "lighthouse",
+        "lighthouse-light",
+        "lighthouse-dark"
+      ],
+      "enumDescriptions": [
+        "Standard colors that follow macOS appearance.",
+        "Standard light colors.",
+        "Standard dark colors.",
+        "The Claude theme, following macOS appearance.",
+        "Claude Light: ivory paper, warm ink and a clay accent.",
+        "Claude Dark: warm charcoal with the same clay accent.",
+        "The Tide theme, following macOS appearance.",
+        "Tide Light: fog-blue paper with a sea-blue accent.",
+        "Tide Dark: deep-sea navy with a sea-blue accent.",
+        "The Kelp theme, following macOS appearance.",
+        "Kelp Light: lichen paper with moss green.",
+        "Kelp Dark: pine black with moss green.",
+        "The Dusk theme, following macOS appearance.",
+        "Dusk Light: lilac paper with violet.",
+        "Dusk Dark: aubergine with violet.",
+        "The Fog theme, following macOS appearance.",
+        "Fog Light: gray paper with an accent of ink and quiet syntax.",
+        "Fog Dark: graphite with an accent of ink and quiet syntax.",
+        "The Lighthouse theme, following macOS appearance.",
+        "Lighthouse Light: white with one amber beam at full contrast.",
+        "Lighthouse Dark: pitch black with one amber beam at full contrast."
+      ],
+      "description": "Color theme for Harbor and its terminal. The editor uses the matching Harbor theme; other editor themes remain available in Workbench: Color Theme.",
+      "scope": "application",
+      "order": 1
+    },
+    "harbor.motion": {
+      "type": "string",
+      "default": "full",
+      "enum": [
+        "full",
+        "subtle",
+        "off"
+      ],
+      "enumDescriptions": [
+        "Staggered reveals and eased panels.",
+        "Short fades only.",
+        "No animation."
+      ],
+      "description": "Motion in Harbor and its editor. macOS Reduce Motion always limits Harbor to subtle.",
+      "scope": "application",
+      "order": 2
+    },
+    "harbor.activityBar.visibleItems": {
+      "type": "integer",
+      "default": 4,
+      "minimum": 1,
+      "maximum": 12,
+      "description": "Views shown in the row above Explorer. The rest open from the arrow after the last one; drag icons to reorder them. The sidebar cannot be dragged narrower than this row; close it with Command+B.",
+      "scope": "application",
+      "order": 3
+    },
+    "harbor.interfaceFontSize": {
+      "type": "number",
+      "default": 13,
+      "minimum": 11,
+      "maximum": 20,
+      "description": "Font size in points for Harbor controls. Use Window: Zoom Level for the editor interface.",
+      "scope": "application",
+      "order": 4
+    },
+    "harbor.liquidGlassEnabled": {
+      "type": "boolean",
+      "default": true,
+      "description": "Use translucent highlights for Harbor controls. Respects macOS Reduce Motion and Reduce Transparency.",
+      "scope": "application",
+      "order": 5
+    },
+    "harbor.modeSwitchShortcut": {
+      "type": "string",
+      "default": "alt+z",
+      "maxLength": 40,
+      "pattern": "^(?:(?:ctrl|alt|shift|cmd)\\+){1,4}[^+\\s]$",
+      "patternErrorMessage": "Use modifiers and one letter, number or symbol, such as alt+z or ctrl+alt+z. Reserved editor and terminal shortcuts cannot be used.",
+      "description": "Switch between the editor and terminal mode. Use ctrl, alt (Option), shift or cmd (Command). Other shortcuts are available in Keyboard Shortcuts.",
+      "scope": "application",
+      "order": 6
+    }
+  }
+}

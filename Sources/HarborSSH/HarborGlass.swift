@@ -12,10 +12,11 @@ private struct HarborGlassAppearance: ViewModifier {
     var highlighted = false
     var fallback: Color = .harborWidget
     @AppStorage("liquidGlassEnabled") private var enabled = true
+    @AppStorage("appearance") private var appearance = HarborTheme.defaultAppearance
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @Environment(\.colorSchemeContrast) private var contrast
     @Environment(\.colorScheme) private var scheme
-    private var translucent: Bool { enabled && !reduceTransparency && contrast != .increased }
+    private var translucent: Bool { enabled && HarborTheme.isStandard(appearance) && !reduceTransparency && contrast != .increased }
     private var shape: RoundedRectangle { RoundedRectangle(cornerRadius: radius, style: .continuous) }
 
     func body(content: Content) -> some View {
@@ -45,7 +46,14 @@ private struct HarborGlassAppearance: ViewModifier {
             } else {
                 content.background { shape.fill(.regularMaterial).overlay { shape.fill(tint.opacity(prominent ? 0.85 : 0.08)) }.allowsHitTesting(false) }
             }
-        } else { content.background { shape.fill(prominent ? Color.harborButton : fallback).allowsHitTesting(false) } }
+        } else {
+            // Without glass, a hovered button takes the hover color, as the Claude kit's buttons do.
+            content.background {
+                shape.fill(prominent ? Color.harborButton : fallback)
+                    .overlay { if highlighted { shape.fill(prominent ? Color.white.opacity(0.10) : Color.harborHover) } }
+                    .allowsHitTesting(false)
+            }
+        }
     }
 }
 
@@ -78,9 +86,11 @@ extension View {
 /// Batch nearby small surfaces through one compositor. Spacing stays below the
 /// normal toolbar gap, so distinct buttons do not blur into one ambiguous target.
 struct HarborGlassCluster<Content: View>: View {
+    @AppStorage("appearance") private var appearance = HarborTheme.defaultAppearance
+    @AppStorage("liquidGlassEnabled") private var enabled = true
     @ViewBuilder var content: () -> Content
     var body: some View {
-        if #available(macOS 26, *) { GlassEffectContainer(spacing: 6, content: content) }
+        if #available(macOS 26, *), enabled && HarborTheme.isStandard(appearance) { GlassEffectContainer(spacing: 6, content: content) }
         else { content() }
     }
 }
@@ -98,14 +108,19 @@ private struct GlassButtonBody: View {
     let prominent: Bool
     let radius: Double
     @AppStorage("liquidGlassEnabled") private var enabled = true
+    @AppStorage("appearance") private var appearance = HarborTheme.defaultAppearance
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @AppStorage(HarborMotion.preferenceKey) private var motion = HarborMotion.Level.full.rawValue
     @Environment(\.isEnabled) private var isEnabled
     @State private var hovered = false
     @State private var point = CGPoint.zero
     @State private var size = CGSize(width: 30, height: 30)
     private var dx: Double { min(max((point.x / max(size.width, 1) - 0.5) * 2, -1), 1) }
     private var dy: Double { min(max((point.y / max(size.height, 1) - 0.5) * 2, -1), 1) }
-    private var moving: Bool { enabled && isEnabled && !reduceMotion && hovered }
+    private var level: HarborMotion.Level { HarborMotion.level(motion, reduceMotion: reduceMotion) }
+    /// Glass bends toward the pointer; everywhere else a button only changes color.
+    private var glass: Bool { enabled && HarborTheme.isStandard(appearance) && level == .full }
+    private var moving: Bool { glass && isEnabled && hovered }
     var body: some View {
         configuration.label
             .modifier(HarborGlassAppearance(radius: radius, prominent: prominent,
@@ -114,9 +129,9 @@ private struct GlassButtonBody: View {
             .scaleEffect(x: configuration.isPressed && moving ? 0.96 : moving ? 1.025 + abs(dx) * 0.025 : 1,
                          y: configuration.isPressed && moving ? 0.96 : moving ? 1.025 + abs(dy) * 0.025 : 1)
             .offset(x: moving ? dx * 1.5 : 0, y: moving ? dy * 1.5 : 0)
-            .animation(reduceMotion || !enabled ? nil : .spring(response: 0.28, dampingFraction: 0.68), value: hovered)
-            .animation(reduceMotion || !enabled ? nil : .spring(response: 0.22, dampingFraction: 0.8), value: configuration.isPressed)
-            .animation(reduceMotion || !enabled ? nil : .interactiveSpring(response: 0.18, dampingFraction: 0.86), value: point)
+            .animation(glass ? Animation.spring(response: 0.28, dampingFraction: 0.68) : HarborMotion.animation(HarborMotion.quick, level: level), value: hovered)
+            .animation(glass ? Animation.spring(response: 0.22, dampingFraction: 0.8) : HarborMotion.feedback(.select, level: level), value: configuration.isPressed)
+            .animation(glass ? Animation.interactiveSpring(response: 0.18, dampingFraction: 0.86) : nil, value: point)
             .background {
                 GeometryReader { geometry in
                     Color.clear.onAppear { size = geometry.size }.onChange(of: geometry.size) { _, value in size = value }
@@ -124,7 +139,7 @@ private struct GlassButtonBody: View {
             }
             .onContinuousHover { phase in
                 switch phase {
-                case .active(let location): hovered = true; if enabled && !reduceMotion { point = location }
+                case .active(let location): hovered = true; if glass { point = location }
                 case .ended: hovered = false
                 }
             }

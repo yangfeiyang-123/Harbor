@@ -4,18 +4,6 @@ import HarborCore
 
 /// Serves bundled, read-only viewer assets on loopback. It exposes no commands or filesystem API.
 @MainActor final class IsaacViewerServer {
-    /// NVIDIA's separately licensed viewer can be installed by the user.
-    /// The default public bundle contains a setup page, not NVIDIA binaries.
-    private let optionalViewerDirectory: URL
-    init(optionalViewerDirectory: URL? = nil) {
-        self.optionalViewerDirectory = optionalViewerDirectory ?? FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Application Support/HarborSSH/IsaacViewer", isDirectory: true)
-    }
-    var assetDirectory: URL {
-        let index = optionalViewerDirectory.appendingPathComponent("index.html")
-        if FileManager.default.isReadableFile(atPath: index.path) { return optionalViewerDirectory }
-        return AppResources.directory("Simulation").appendingPathComponent("viewer")
-    }
     private var listener: NWListener?
     private var connections: [UUID: NWConnection] = [:]
     private let token = UUID().uuidString
@@ -73,9 +61,9 @@ import HarborCore
                     if relative == "health" {
                         body = Data("ok".utf8); code = "200 OK"
                     } else if !relative.contains(".."), !relative.contains("%"), !relative.contains("\\") {
-                        let root = self.assetDirectory.resolvingSymlinksInPath()
-                        let file = root.appendingPathComponent(relative.isEmpty ? "index.html" : relative).resolvingSymlinksInPath()
-                        if file.path.hasPrefix(root.path + "/"), let bytes = try? Data(contentsOf: file), bytes.count < 20_000_000 {
+                        let root = AppResources.directory("Simulation").appendingPathComponent("viewer")
+                        let file = root.appendingPathComponent(relative.isEmpty ? "index.html" : relative)
+                        if let bytes = try? Data(contentsOf: file), bytes.count < 20_000_000 {
                             body = bytes; code = "200 OK"
                             mime = ["html":"text/html", "js":"text/javascript", "css":"text/css", "svg":"image/svg+xml", "txt":"text/plain"][file.pathExtension] ?? "application/octet-stream"
                         }

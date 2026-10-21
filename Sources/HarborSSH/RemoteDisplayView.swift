@@ -45,7 +45,7 @@ struct RemoteDisplayPage: View {
                     }.padding(8)
                 }
                 Text("Simulation runs on your server. Disconnecting a display keeps it running.").font(.caption).foregroundStyle(Color.harborMuted).padding(14)
-            }.frame(width: 220).background(Color.harborSidebar)
+            }.frame(width: 220).background(Color.harborSidebar, ignoresSafeAreaEdges: [])
             Divider()
             if let profile = controller.profiles.first(where: { $0.id == controller.selectedID }) {
                 RemoteDisplayDetail(session: controller.session(for: profile), server: store.profiles.first(where: { $0.id == profile.serverID }), edit: { editing = profile }).id(profile.id)
@@ -58,7 +58,8 @@ struct RemoteDisplayPage: View {
                     Button("Add Remote Display") { editing = RemoteDisplayProfile(serverID: store.selectedProfileID) }.buttonStyle(.borderedProminent)
                 }.padding(30).frame(maxWidth: .infinity, maxHeight: .infinity)
             }
-        }.background(Color.harborBackground)
+        // Under the page's bar: a ground that spread to the top of the window would cover it.
+        }.background(Color.harborBackground, ignoresSafeAreaEdges: [])
         .onAppear { controller.load() }
         .sheet(item: $editing) { profile in
             RemoteDisplayEditor(profile: profile, servers: store.profiles, controller: controller)
@@ -90,7 +91,7 @@ struct RemoteDisplayPage: View {
             profile.address = "isaac://\(host):49100"
             profile.launch = SimulationLaunch(directory: directory)
             let quoted = "'" + directory.replacingOccurrences(of: "'", with: "'\"'\"'") + "'"
-            let probe = await ProcessRunner.run("/usr/bin/ssh", SSHArguments.connection(server) + ["-T", "-o", "BatchMode=yes", "-o", "ConnectTimeout=8", "-o", "RemoteCommand=none", "--", server.host, "cd -- \(quoted) && test -x scripts/replay_remote.sh"], timeout: 12)
+            let probe = await ServerPasswords.runQuietly(SSHArguments.connection(server) + ["-T", "-o", "BatchMode=yes", "-o", "ConnectTimeout=8", "-o", "RemoteCommand=none", "--", server.host, "cd -- \(quoted) && test -x scripts/replay_remote.sh"], server: server.id, timeout: 12)
             if probe.succeeded && profile.validationError == nil && controller.save(profile) {
                 controller.session(for: profile).connect(server: server)
             } else { editing = profile }
@@ -139,7 +140,7 @@ struct RemoteDisplayCanvas: View {
             } else {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 18) {
-                        if session.connecting { ProgressView("Connecting…") }
+                        if session.connecting { VStack(alignment: .leading, spacing: 8) { Text("Connecting…").foregroundStyle(Color.harborMuted); HarborProgressBar() } }
                         Text(session.profile.preset.title).font(.title2.bold())
                         Text(session.profile.client == .isaac ? "Start & View opens your project's simulation automatically. Keep this Mac connected to your server network or VPN. The interactive viewer opens in its own Harbor window powered by Chrome or Edge. Close any other Isaac viewer before connecting." : session.profile.preset.guidance).foregroundStyle(Color.harborMuted).fixedSize(horizontal: false, vertical: true)
                         Label(session.profile.client.title, systemImage: "display")
@@ -170,7 +171,7 @@ struct RemoteDisplayCanvas: View {
                     Button { session.openExternal() } label: { Image(systemName: "arrow.up.right.square") }.help("Open External Viewer").accessibilityLabel("Open External Viewer")
                 }
             }.buttonStyle(.plain).padding(.horizontal, 12).frame(height: 34)
-        }.background(Color.harborBackground).foregroundStyle(Color.harborForeground)
+        }.background(Color.harborBackground, ignoresSafeAreaEdges: []).foregroundStyle(Color.harborForeground)
     }
 }
 
@@ -242,7 +243,7 @@ struct RemoteDisplayEditor: View {
         checking = true; diagnostics = nil
         Task {
             let command = "printf 'Display tools on PATH\\n'; for x in isaacsim webots gz gazebo Xvnc Xtigervnc vncserver x11vnc websockify; do command -v \"$x\" || :; done; printf '\\nGPU\\n'; if command -v nvidia-smi >/dev/null; then nvidia-smi --query-gpu=name --format=csv,noheader; fi; printf '\\nListening TCP ports\\n'; if command -v ss >/dev/null; then ss -ltn | head -30; fi"
-            let result = await ProcessRunner.run("/usr/bin/ssh", SSHArguments.connection(server) + ["-T", "-o", "BatchMode=yes", "-o", "ConnectTimeout=8", "-o", "RemoteCommand=none", "--", server.host, command], timeout: 15)
+            let result = await ServerPasswords.runQuietly(SSHArguments.connection(server) + ["-T", "-o", "BatchMode=yes", "-o", "ConnectTimeout=8", "-o", "RemoteCommand=none", "--", server.host, command], server: server.id, timeout: 15)
             diagnostics = result.succeeded ? result.output + "\nConda, containers and other environments may contain additional tools." : "Server check failed.\n" + result.output
             checking = false
         }

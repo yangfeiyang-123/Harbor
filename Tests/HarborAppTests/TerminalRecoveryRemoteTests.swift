@@ -8,7 +8,7 @@ final class TerminalRecoveryRemoteTests: XCTestCase {
         guard let host = ProcessInfo.processInfo.environment["HARBOR_QA_SSH_HOST"] else { throw XCTSkip("Authorized remote recovery check requires HARBOR_QA_SSH_HOST") }
         _ = NSApplication.shared
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("harbor-remote-recovery-" + UUID().uuidString)
-        let suite = "harbor.remote-recovery." + UUID().uuidString, prefs = UserDefaults(suiteName:suite)!
+        let suite = "harbor.remote-recovery." + UUID().uuidString, prefs = TestDefaults.suite(suite)!
         let profile = ServerProfile(name:"Recovery QA",host:host,useTmux:false)
         let store = AppStore(historyRoot:root,workspaceDefaults:prefs)
         try store.history.prepare(); store.loading = false; store.profiles = [profile]; store.selectWorkspace(profile.id)
@@ -64,6 +64,49 @@ final class TerminalRecoveryRemoteTests: XCTestCase {
             XCTAssertEqual(live.remoteShellPID,pidBefore)
             live.terminal.send(txt:"printf 'AFTER_%s\\n' $HARBOR_RECOVERY_QA_VALUE\n")
             try await wait { live.recoveryOutput().contains("AFTER_retained_" + original.id.uuidString) }
+            // A TUI queries its cursor once, then waits without user input.
+            // Reattaching must not send a second reply to that historical query.
+            let program = """
+            import os,select,time,tty
+            tty.setraw(0)
+            def query():
+                os.write(1,b'\\x1b[6n')
+                data=b''
+                end=time.monotonic()+3
+                while not data.endswith(b'R') and time.monotonic()<end:
+                    if select.select([0],[],[],.1)[0]: data+=os.read(0,100)
+                return data.startswith(b'\\x1b[') and data.endswith(b'R')
+            if not query(): raise RuntimeError('initial query failed')
+            print('THINKING_'+'READY',flush=True)
+            end=time.monotonic()+30
+            while time.monotonic()<end:
+                if not select.select([0],[],[],.1)[0]: continue
+                data=os.read(0,100)
+                if data==b'x':
+                    print('FRESH_'+'QUERY_OK' if query() else 'FRESH_'+'QUERY_FAILED',flush=True)
+                    break
+                print('UNEXPECTED_'+'INPUT_'+data.hex(),flush=True)
+            time.sleep(1)
+            """
+            live.terminal.send(txt: "exec python3 -c " + SSHArguments.quote(program) + "\n")
+            try await wait { live.terminal.getTerminal().getRecoveryText().contains("THINKING_READY") }
+            XCTAssertEqual(Darwin.kill(live.terminal.process.shellPid, SIGKILL), 0)
+            try await wait { live.ended }
+            next.reconnect(live)
+            let thinking = try XCTUnwrap(next.activeSession)
+            try await wait { thinking.ready }
+            try await Task.sleep(nanoseconds: 500_000_000)
+            let visible = thinking.terminal.getTerminal().getRecoveryText()
+            XCTAssertTrue(visible.contains("THINKING_READY"), "Restored content must exist in the terminal, not only in savedOutput")
+            XCTAssertFalse(visible.contains("UNEXPECTED_INPUT_"))
+            thinking.terminal.send(txt: "x")
+            try await wait { thinking.terminal.getTerminal().getRecoveryText().contains("FRESH_QUERY_OK") }
+            // The program the shell was replaced by is over a second later. The pane says that its
+            // shell has ended (the host's own status, through ssh and the transport), after the
+            // last of its output: there is nothing to reconnect to, and Reconnect starts a new one.
+            try await wait { thinking.ended }
+            XCTAssertTrue(thinking.remotePTYGone, thinking.status); XCTAssertFalse(thinking.resumable)
+            XCTAssertTrue(thinking.recoveryOutput().contains("remote terminal ended"))
             await cleanup()
         } catch { await cleanup(); throw error }
     }

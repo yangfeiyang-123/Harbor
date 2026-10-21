@@ -1,5 +1,149 @@
 import SwiftUI
+import HarborCore
 import AppKit
+
+/// Native connection controls share one compact title-bar row. Code-OSS owns
+/// the editor, terminal, activity bar and status bar underneath this fixed row.
+struct WorkbenchTopBar: View {
+    @EnvironmentObject private var store: AppStore
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @AppStorage(HarborMotion.preferenceKey) private var motion = HarborMotion.Level.full.rawValue
+    private var motionLevel: HarborMotion.Level { HarborMotion.level(motion, reduceMotion: reduceMotion) }
+    @ObservedObject var visibility: WorkbenchToolbarVisibility
+    /// The editor of the workspace on screen: while it opens, the opening page shows the title.
+    @ObservedObject var session: CodeWorkbenchSession
+    var height = WorkbenchWindowMetrics.titlebarHeight
+    var leading = WorkbenchWindowMetrics.trafficLightInset
+    let addServer: () -> Void
+    @State private var foldersPresented = false
+
+    var body: some View {
+        ZStack {
+            WindowDragArea()
+            Group {
+                // The window's name if it has one, where the workspace is, then its folder; the
+                // opening page hands this same title over.
+                WorkspaceTitle(window: store.windowName, server: store.selectedProfile?.name ?? LocalMachine.name, folder: store.currentFiles.directoryTitle)
+                    .opacity((session.ready || session.revealed || session.error != nil) && !session.titleInFlight ? 1 : 0)
+                    // Switching folders: the old title gives way to the new one, as the editors do.
+                    .id(store.currentFiles.key).transition(.opacity)
+            }
+                .animation(HarborMotion.animation(HarborMotion.standard), value: store.currentFiles.key)
+                .padding(.horizontal, 110).allowsHitTesting(false)
+                .opacity(visibility.revealed ? 0 : 1).accessibilityHidden(visibility.revealed)
+            HStack(spacing: 7) {
+                // Always there, as on the terminal page; the menus beside it come with the pointer.
+                StartPageButton(tint: WorkspaceTheme.muted)
+                Group {
+                    serverMenu
+                    folderMenu
+                    moreMenu
+                }.opacity(visibility.revealed ? 1 : 0).allowsHitTesting(visibility.revealed).accessibilityHidden(!visibility.revealed)
+                Spacer(minLength: 12)
+                HStack(spacing: 2) {
+                    layoutButton("Toggle Sidebar · ⌘B", symbol: "sidebar.left", command: "workbench.action.toggleSidebarVisibility")
+                    layoutButton("Toggle Panel · ⌘J", symbol: "rectangle.bottomthird.inset.filled", command: "workbench.action.togglePanel")
+                    layoutButton("Toggle Secondary Sidebar", symbol: "sidebar.right", command: "workbench.action.toggleAuxiliaryBar")
+                    layoutButton("Split Editor", symbol: "rectangle.split.2x1", command: "workbench.action.splitEditor")
+                    Button { store.settingsVisible.toggle() } label: {
+                        Image(systemName: "gearshape").frame(width: WorkbenchWindowMetrics.controlSize, height: WorkbenchWindowMetrics.controlSize)
+                    }.buttonStyle(.plain).help("Settings · ⌘,").accessibilityLabel("Settings")
+                        .accessibilityIdentifier("workbench-settings")
+                }.font(.system(size: 13)).foregroundStyle(WorkspaceTheme.muted)
+                    .opacity(visibility.revealed ? 1 : 0).allowsHitTesting(visibility.revealed).accessibilityHidden(!visibility.revealed)
+            }.padding(.leading, max(leading - 4, 8)).padding(.trailing, 8)
+        }.frame(height: height)
+            .background(WorkspaceTheme.background).contentShape(Rectangle())
+            .contextMenu { Button("Rename Window…") { store.promptForWindowName() } }
+            .onHover { visibility.setHovered($0) }
+            .animation(HarborMotion.feedback(.crossfade, level: motionLevel), value: visibility.revealed)
+            .onChange(of: foldersPresented) { _, presented in visibility.setPopoverPresented(presented) }
+            .onReceive(NotificationCenter.default.publisher(for: NSMenu.didBeginTrackingNotification)) { _ in visibility.menuTracking(true) }
+            .onReceive(NotificationCenter.default.publisher(for: NSMenu.didEndTrackingNotification)) { _ in visibility.menuTracking(false) }
+            .onDisappear { visibility.reset() }
+            #if DEBUG
+            // The probe shows the bar's controls as the pointer would, to look at them.
+            .onReceive(NotificationCenter.default.publisher(for: Notification.Name("harbor.qa.bar"))) { note in visibility.setHovered(note.object as? Bool ?? true) }
+            #endif
+            .accessibilityIdentifier("workbench-titlebar")
+    }
+
+    private var serverMenu: some View {
+        Menu {
+            Button { store.selectWorkspace(nil) } label: {
+                Label(LocalMachine.name, systemImage: store.selectedProfileID == nil ? "checkmark" : "laptopcomputer")
+            }
+            if !store.profiles.isEmpty { Divider() }
+            ForEach(store.profiles) { profile in
+                Button { store.selectWorkspace(profile.id) } label: {
+                    Label(profile.name, systemImage: store.selectedProfileID == profile.id ? "checkmark" : profile.displayIcon)
+                }
+            }
+            Divider()
+            Button("Add Server…", action: addServer)
+        } label: {
+            HStack(spacing: 5) {
+                Image(systemName: store.selectedProfile?.displayIcon ?? "laptopcomputer")
+                Text(store.selectedProfile?.name ?? LocalMachine.name).lineLimit(1).truncationMode(.tail)
+                Image(systemName: "chevron.down").font(.system(size: 8, weight: .semibold))
+            }.font(.system(size: 11)).frame(height: WorkbenchWindowMetrics.controlSize)
+        }.menuStyle(.borderlessButton).menuIndicator(.hidden)
+            .frame(maxWidth: 180, alignment: .leading).fixedSize(horizontal: true, vertical: false)
+            .accessibilityLabel("Switch Server").accessibilityIdentifier("workbench-servers")
+    }
+
+    private var folderMenu: some View {
+        HStack(spacing: 1) {
+            Button { foldersPresented.toggle() } label: {
+                HStack(spacing: 5) {
+                    Image(systemName: "folder")
+                    Text(store.currentFiles.directoryTitle).lineLimit(1).truncationMode(.middle)
+                    Image(systemName: "chevron.down").font(.system(size: 8, weight: .semibold))
+                }.padding(.horizontal, 4).frame(height: WorkbenchWindowMetrics.controlSize)
+                    .contentShape(Rectangle())
+            }.buttonStyle(.plain).frame(maxWidth: 220)
+                .accessibilityLabel("Switch Folder Workspace").accessibilityIdentifier("directory-workspaces")
+                .popover(isPresented: $foldersPresented) {
+                    DirectoryWorkspaceList(profile: store.selectedProfile) { foldersPresented = false }.environmentObject(store)
+                }
+                .contextMenu { WorkspaceFinderAction(workspace: store.currentFiles) }
+            Button { store.chooseDirectoryWorkspace() } label: {
+                Image(systemName: "plus").frame(width: WorkbenchWindowMetrics.controlSize, height: WorkbenchWindowMetrics.controlSize)
+                    .contentShape(Rectangle())
+            }.buttonStyle(.plain).help("Open Folder…").accessibilityLabel("Add Folder Workspace")
+                .accessibilityIdentifier("add-directory-workspace")
+        }.font(.system(size: 11)).foregroundStyle(WorkspaceTheme.muted).fixedSize(horizontal: true, vertical: false)
+    }
+
+    /// Harbor's other places, and what is done with the folder on screen. (The editor's sidebar
+    /// used to carry a "Harbor" view with these; they are here, in the menu bar and in the Command Palette.)
+    private var moreMenu: some View {
+        Menu {
+            Button { store.page = .proxy } label: { Label("Reverse Proxy", systemImage: "arrow.left.arrow.right") }
+            Button { store.page = .display } label: { Label("Remote Display", systemImage: "display") }
+            Divider()
+            Button { store.organizerVisible = true } label: { Label("Folders in Windows…", systemImage: "rectangle.3.group") }
+            Button { WorkspaceSwitcher.shared.present(sticky: true) } label: { Label("Switch Folder…", systemImage: "arrow.left.arrow.right.square") }
+            Divider()
+            // Terminals of a server that ran before the editor had its own: attached again on request.
+            if store.hasPreviousSessions {
+                Button { session.command("resumePreviousSession") } label: { Label("Resume Previous Session…", systemImage: "clock.arrow.circlepath") }
+            }
+            Button { store.closeDirectoryWorkspace(store.currentFiles) } label: { Label("Close Folder", systemImage: "xmark") }
+        } label: {
+            Image(systemName: "ellipsis").font(.system(size: 11)).frame(width: WorkbenchWindowMetrics.controlSize, height: WorkbenchWindowMetrics.controlSize)
+                .contentShape(Rectangle())
+        }.menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().tint(WorkspaceTheme.muted)
+            .help("Reverse Proxy, Remote Display, Folders in Windows").accessibilityLabel("More").accessibilityIdentifier("workbench-more")
+    }
+
+    private func layoutButton(_ title: String, symbol: String, command: String) -> some View {
+        Button { store.codeWorkbench.existing(for: store.currentFiles)?.command(command) } label: {
+            Image(systemName: symbol).frame(width: WorkbenchWindowMetrics.controlSize, height: WorkbenchWindowMetrics.controlSize)
+                .contentShape(Rectangle())
+        }.buttonStyle(.plain).help(title).accessibilityLabel(title)
+    }
+}
 
 enum WorkspaceTabLayout {
     static let minimum = 40.0
@@ -7,33 +151,6 @@ enum WorkspaceTabLayout {
     static func clamp(_ width: Double) -> Double { min(max(width.isFinite ? width : 150, minimum), maximum) }
     static func fittedWidth(_ title: String) -> Double {
         clamp(Double((title as NSString).size(withAttributes: [.font: NSFont.systemFont(ofSize: 12)]).width) + 66)
-    }
-    // Resolve collisions within the open group, so even paths with the same hash
-    // receive distinct colors. Sorting makes the assignment independent of tab order.
-    static func colorIndex(path: String, peers: [String]) -> Int? {
-        let name = (path as NSString).lastPathComponent
-        let group = Set(peers.filter { ($0 as NSString).lastPathComponent == name }).sorted()
-        guard group.count > 1 else { return nil }
-        var used = Set<Int>()
-        for item in group {
-            let hash = item.utf8.reduce(UInt64(14695981039346656037)) { ($0 ^ UInt64($1)) &* 1099511628211 }
-            var slot = Int(hash % 12)
-            while used.contains(slot) && used.count < 12 { slot = (slot + 1) % 12 }
-            used.insert(slot)
-            if item == path { return slot }
-        }
-        return nil
-    }
-    static func disambiguatedTitle(path: String, peers: [String]) -> String {
-        let name = (path as NSString).lastPathComponent
-        let group = peers.filter { $0 != path && ($0 as NSString).lastPathComponent == name }
-        guard !group.isEmpty else { return name }
-        let parts = path.split(separator: "/").map(String.init)
-        for count in 2...max(2, parts.count) {
-            let suffix = parts.suffix(count).joined(separator: "/")
-            if !group.contains(where: { $0.split(separator: "/").suffix(count).joined(separator: "/") == suffix }) { return suffix }
-        }
-        return path
     }
 }
 
@@ -56,7 +173,6 @@ struct WorkspaceTab: View {
     var revealFile: (() -> Void)?
     var closeOthers: (() -> Void)?
     var copyPath: (() -> Void)?
-    var filePath: String?
     var fileLabelTint: Color?
     @State private var dragStart: Double?
     @State private var hovered = false
@@ -66,10 +182,8 @@ struct WorkspaceTab: View {
         HStack(spacing: 0) {
             Button(action: select) {
                 HStack(spacing: 7 * reveal) {
-                    Group {
-                        if let filePath { WorkspaceFileIcon(path: filePath) }
-                        else { HarborSymbol(systemName: symbol).font(.system(size: 13)).foregroundStyle(tint) }
-                    }.frame(width: 22, height: 26).overlay(alignment: .bottomTrailing) {
+                    HarborSymbol(systemName: symbol).font(.system(size: 13)).foregroundStyle(tint)
+                        .frame(width: 22, height: 26).overlay(alignment: .bottomTrailing) {
                             if (dirty && !flat) || status != nil { Circle().fill(dirty ? .orange : status!).frame(width: 5, height: 5).offset(x: 1, y: -1) }
                         }
                     Text(title).harborFont(12).lineLimit(1).truncationMode(.middle)
@@ -120,27 +234,6 @@ struct WorkspaceTab: View {
     }
 }
 
-struct EditorPosition: Equatable {
-    var line = 1
-    var column = 1
-    var lines = 1
-    var label: String { "Ln \(line), Col \(column) · \(lines) lines · UTF-8" }
-}
-
-struct WorkspaceStatusBar: View {
-    @ObservedObject var workspace: FileWorkspace
-    let session: TerminalSession?
-    var body: some View {
-        HStack(spacing: 12) {
-            if let session { ConnectionStatus(session: session) }
-            else { Label(workspace.profile == nil ? "Local" : "SSH · \(workspace.profile!.name)", systemImage: workspace.profile?.displayIcon ?? "laptopcomputer") }
-            Spacer(minLength: 8)
-            FileTransferIndicator(workspace: workspace)
-            if workspace.enabled, let document = workspace.currentDocument { DocumentStatus(document: document) }
-        }.harborFont(10).foregroundStyle(workspace.enabled ? WorkspaceTheme.muted : Color.harborMuted).padding(.horizontal, 12).frame(height: workspace.enabled ? 24 : 26)
-            .frame(maxWidth: .infinity).background(workspace.enabled ? WorkspaceTheme.sidebar : Color.harborBackground)
-    }
-}
 struct ConnectionStatus: View {
     @ObservedObject var session: TerminalSession
     var body: some View {
@@ -150,56 +243,4 @@ struct ConnectionStatus: View {
             if session.tmuxName != nil { Image(systemName: "arrow.clockwise").help("Restorable tmux session") }
         }
     }
-}
-struct DocumentStatus: View {
-    @ObservedObject var document: WorkspaceDocument
-    var body: some View {
-        HStack(spacing: 8) {
-            if document.dirty { Text("Unsaved").foregroundStyle(.orange) }
-            if document.text != nil { Text(document.position.label).monospacedDigit() }
-            else { Text(document.entry.name).lineLimit(1).truncationMode(.middle) }
-        }.lineLimit(1)
-    }
-}
-
-struct WorkspaceSplitLayout {
-    let editor: Double
-    let terminal: Double
-    static let divider = 7.0
-    init(height: Double, ratio: Double, terminalMinimum requestedMinimum: Double = 90) {
-        let available = max(0, height - Self.divider)
-        let terminalMinimum = min(max(0, requestedMinimum), available)
-        editor = min(max(available * (ratio.isFinite ? ratio : 0.64), 0), available - terminalMinimum)
-        terminal = available - editor
-    }
-}
-
-/// Present native child bounds at each animation frame, including zero height.
-struct InterpolatedHeight<Content: View>: View, Animatable {
-    var height: Double
-    @ViewBuilder var content: (Double) -> Content
-    var animatableData: Double { get { height } set { height = newValue } }
-    var body: some View { content(max(0, height)).transaction { $0.animation = nil } }
-}
-
-/// AppKit children must never negotiate a document-sized SwiftUI frame or paint
-/// outside their pane. In particular WKWebView and PDFView retain large sizes.
-final class BoundedNativeView: NSView {
-    override var isFlipped: Bool { true }
-    override var intrinsicContentSize: NSSize { NSSize(width: NSView.noIntrinsicMetric, height: NSView.noIntrinsicMetric) }
-    init(content: NSView) {
-        super.init(frame: .zero)
-        wantsLayer = true; layer?.masksToBounds = true
-        content.removeFromSuperview(); content.translatesAutoresizingMaskIntoConstraints = false
-        content.setContentHuggingPriority(.init(1), for: .horizontal)
-        content.setContentHuggingPriority(.init(1), for: .vertical)
-        content.setContentCompressionResistancePriority(.init(1), for: .horizontal)
-        content.setContentCompressionResistancePriority(.init(1), for: .vertical)
-        addSubview(content)
-        NSLayoutConstraint.activate([
-            content.leadingAnchor.constraint(equalTo: leadingAnchor), content.trailingAnchor.constraint(equalTo: trailingAnchor),
-            content.topAnchor.constraint(equalTo: topAnchor), content.bottomAnchor.constraint(equalTo: bottomAnchor)
-        ])
-    }
-    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 }

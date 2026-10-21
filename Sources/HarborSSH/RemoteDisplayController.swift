@@ -81,8 +81,24 @@ final class RemoteDisplaySession: NSObject, ObservableObject, WKNavigationDelega
                 var url = self.profile.url!
                 if self.profile.useSSHTunnel {
                     guard let server else { throw DisplayError.message("Choose an SSH server first.") }
+                    // The tunnel carries whatever forwarding the alias configures along with its own
+                    // (ssh cannot clear the one without the other). Such an alias is refused, as it
+                    // is for forwarding rules: it either failed here without saying why, because the
+                    // port was already taken, or quietly opened its forwards a second time.
+                    let effective = await ProcessRunner.run("/usr/bin/ssh", SSHArguments.connection(server) + ["-G", "--", server.host], timeout: 10)
+                    try Task.checkCancellation()
+                    guard self.generation == token else { return }
+                    if effective.succeeded {
+                        let settings = SSHConfig.effective(effective.output)
+                        guard settings["remoteforward"] == nil, settings["localforward"] == nil, settings["dynamicforward"] == nil else {
+                            throw DisplayError.message("This SSH alias already configures port forwarding (LocalForward, RemoteForward or DynamicForward in ~/.ssh/config). Choose a login alias without it for this display.")
+                        }
+                    }
                     let port = try Self.unusedPort()
-                    try self.startTunnel(server: server, port: port, token: token)
+                    let tunnel = await ServerPasswords.quietly(self.profile.tunnelArguments(server: server, localPort: port), server: server.id)
+                    try Task.checkCancellation()
+                    guard self.generation == token else { return }
+                    try self.startTunnel(arguments: tunnel.arguments, environment: tunnel.environment, token: token)
                     var ready = false
                     for _ in 0..<120 {
                         try Task.checkCancellation()
@@ -112,10 +128,11 @@ final class RemoteDisplaySession: NSObject, ObservableObject, WKNavigationDelega
             }
         }
     }
-    private func startTunnel(server: ServerProfile, port: Int, token: UUID) throws {
+    private func startTunnel(arguments: [String], environment: [String: String]?, token: UUID) throws {
         let process = Process(), pipe = Pipe()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/ssh")
-        process.arguments = profile.tunnelArguments(server: server, localPort: port)
+        process.arguments = arguments
+        if let environment { process.environment = ProcessInfo.processInfo.environment.merging(environment) { $1 } }
         process.standardInput = FileHandle.nullDevice; process.standardOutput = FileHandle.nullDevice; process.standardError = pipe
         // Drain SSH diagnostics without growing a retained log or blocking the child.
         pipe.fileHandleForReading.readabilityHandler = { _ = $0.availableData }
@@ -265,7 +282,7 @@ extension RemoteDisplaySession {
         func quote(_ value: String) -> String { "'" + value.replacingOccurrences(of: "'", with: "'\"'\"'") + "'" }
         let code = "import base64;exec(compile(base64.b64decode('\(script)'),'<harbor-display>','exec'))"
         let command = "python3 -c \(quote(code)) \(quote(config))"
-        let result = await ProcessRunner.run("/usr/bin/ssh", SSHArguments.connection(server) + ["-T", "-o", "BatchMode=yes", "-o", "ConnectTimeout=8", "-o", "RemoteCommand=none", "--", server.host, command], timeout: 15)
+        let result = await ServerPasswords.runQuietly(SSHArguments.connection(server) + ["-T", "-o", "BatchMode=yes", "-o", "ConnectTimeout=8", "-o", "RemoteCommand=none", "--", server.host, command], server: server.id, timeout: 15)
         guard result.succeeded, let line = result.output.components(separatedBy: "\n").last(where: { $0.hasPrefix("HARBOR_DISPLAY=") }) else {
             throw DisplayError.message("Could not reach the simulation service. Check VPN / SSH. " + String(result.output.suffix(800)))
         }

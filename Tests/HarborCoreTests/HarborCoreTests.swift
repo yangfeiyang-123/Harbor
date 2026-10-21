@@ -3,8 +3,8 @@ import XCTest
 
 final class HarborCoreTests: XCTestCase {
     func testCommandTranscriptReplaysRedrawsBackspaceAndSplitUTF8() {
-        let raw = Data("%                 \r \r(base) demo@Mac ~ % p\u{8}printf '中文\\n'\r(base) demo@Mac ~ % printf '中文\\n'\u{1b}[K\r\n中文\r\n(base) demo@Mac ~ % ".utf8)
-        let expected = "(base) demo@Mac ~ % printf '中文\\n'\n中文\n(base) demo@Mac ~ %"
+        let raw = Data("%                 \r \r(base) felix@Mac ~ % p\u{8}printf '中文\\n'\r(base) felix@Mac ~ % printf '中文\\n'\u{1b}[K\r\n中文\r\n(base) felix@Mac ~ % ".utf8)
+        let expected = "(base) felix@Mac ~ % printf '中文\\n'\n中文\n(base) felix@Mac ~ %"
         for width in 1...raw.count {
             var filter = CommandTranscriptFilter(), output = Data()
             for offset in stride(from: 0, to: raw.count, by: width) { output.append(filter.consume(raw.subdata(in: offset..<min(offset + width, raw.count)))) }
@@ -30,8 +30,8 @@ final class HarborCoreTests: XCTestCase {
         let history = try HistoryStore(root: temporaryDirectory())
         let record = SessionRecord(serverID: nil, serverName: "本机", title: "本机 · 1")
         let writer = try TranscriptWriter(url: history.logURL(record.id))
-        writer.append(Data("demo@Mac ~ % p\u{8}pwd".utf8)); writer.flush()
-        XCTAssertEqual(history.commandTranscript(record.id), "demo@Mac ~ % pwd")
+        writer.append(Data("felix@Mac ~ % p\u{8}pwd".utf8)); writer.flush()
+        XCTAssertEqual(history.commandTranscript(record.id), "felix@Mac ~ % pwd")
         writer.append(Data("\r\n/home/felix\r\n".utf8)); writer.close()
         XCTAssertEqual(CommandHistory.parse(history.commandTranscript(record.id)).first?.command, "pwd")
         XCTAssertEqual(history.search([record], query: "pwd"), [record.id])
@@ -77,10 +77,10 @@ final class HarborCoreTests: XCTestCase {
         XCTAssertNil(ServerIdentity.key(effective: ["hostname": "gpu"]))
     }
     func testCommandHistoryGroupsBashZshAndChineseWithoutChangingOutput() {
-        let text = "Last login: yesterday\ndemo@gpu:~$ pwd\n/home/demo\n(base) demo@gpu:~/work$ printf '中文'\n中文\ndemo@Mac ~ % ls\na.txt\nb.txt\ndemo@Mac ~ % "
+        let text = "Last login: yesterday\nfeiyang@gpu:~$ pwd\n/home/feiyang\n(base) feiyang@gpu:~/work$ printf '中文'\n中文\nfelix@Mac ~ % ls\na.txt\nb.txt\nfelix@Mac ~ % "
         let blocks = CommandHistory.parse(text)
         XCTAssertEqual(blocks.compactMap(\.command), ["pwd", "printf '中文'", "ls"])
-        XCTAssertEqual(blocks.map(\.output), ["Last login: yesterday", "/home/demo", "中文", "a.txt\nb.txt"])
+        XCTAssertEqual(blocks.map(\.output), ["Last login: yesterday", "/home/feiyang", "中文", "a.txt\nb.txt"])
         XCTAssertEqual(Set(blocks.map(\.id)).count, blocks.count)
     }
     func testCommandHistoryPreservesUnrecognizedOutputAndBlankCommands() {
@@ -88,7 +88,7 @@ final class HarborCoreTests: XCTestCase {
         XCTAssertEqual(CommandHistory.parse(text).count, 1)
         XCTAssertNil(CommandHistory.parse(text).first?.command)
         XCTAssertEqual(CommandHistory.parse(text).first?.output, String(text.dropLast()))
-        let redraw = "demo@Mac ~ % pwd\ndemo@Mac ~ % pwd\n/Users/demo\ndemo@Mac ~ % \n"
+        let redraw = "felix@Mac ~ % pwd\nfelix@Mac ~ % pwd\n/Users/felix\nfelix@Mac ~ % \n"
         XCTAssertEqual(CommandHistory.parse(redraw).compactMap(\.command), ["pwd"])
     }
     func testManagedProxyNeedsActualHTTPProofNotJustRunningJobs() {

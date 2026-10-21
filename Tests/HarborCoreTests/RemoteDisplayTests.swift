@@ -4,7 +4,7 @@ import XCTest
 final class RemoteDisplayTests: XCTestCase {
     func testIsaacLaunchAndLegacyCatalogCompatibility() throws {
         var display = RemoteDisplayProfile(serverID: UUID())
-        display.client = .isaac; display.preset = .isaac; display.address = "isaac://192.0.2.20:49100"; display.useSSHTunnel = false
+        display.client = .isaac; display.preset = .isaac; display.address = "isaac://128.32.164.89:49100"; display.useSSHTunnel = false
         display.launch = SimulationLaunch(directory: "/home/user/Project with spaces")
         XCTAssertNil(display.validationError)
         XCTAssertEqual(display.port, 49100)

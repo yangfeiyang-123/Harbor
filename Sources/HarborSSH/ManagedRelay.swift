@@ -3,9 +3,9 @@ import HarborCore
 
 /// Finds the reverse-tunnel gateway relay that paces traffic to a server, so Harbor's own file
 /// transfers can take tokens from it (`TransferPacer`). The gateway (gateway-shaper.py, started by
-/// an optional user-managed service) lists relay addresses and ports in `/status`.
+/// server-proxy-macos.sh) lists every relay with the server's address and its port in `/status`.
 enum ManagedRelay {
-    /// Optional local pacing service; absent on a standard installation.
+    /// HEALTH_PORT in server-proxy-macos.sh.
     private static let status = URL(string: "http://127.0.0.1:10809/status")!
     private static let session: URLSession = {
         let configuration = URLSessionConfiguration.ephemeral

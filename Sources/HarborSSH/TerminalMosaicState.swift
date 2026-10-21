@@ -3,17 +3,68 @@ import HarborCore
 
 enum TerminalScope: Hashable, Codable { case workspace(UUID?), directory(UUID?, UUID), window(UUID) }
 
+/// One split may await a remote working-directory lookup for each source pane.
+/// Repeated shortcuts share that request; cancellation also invalidates a lookup
+/// that does not itself cooperate with Task cancellation.
+@MainActor final class TerminalSplitRequest {
+    private var task: Task<Void, Never>?
+    private var ticket: UUID?
+    var pending: Bool { ticket != nil }
+
+    func run(refresh: @escaping @MainActor () async -> Void, completion: @escaping @MainActor () -> Void) {
+        guard !pending else { return }
+        let current = UUID(); ticket = current
+        task = Task { [weak self] in
+            await refresh()
+            guard let self, ticket == current else { return }
+            task = nil; ticket = nil
+            guard !Task.isCancelled else { return }
+            completion()
+        }
+    }
+
+    func cancel() {
+        ticket = nil
+        task?.cancel(); task = nil
+    }
+}
+
 extension AppStore {
     /// New terminal groups are independent of the currently selected split tree.
     func openIndependentTerminal(in scope: TerminalScope? = nil) {
+        // On the terminal page a new terminal is a tab of that page.
+        if scope == nil, page == .terminal, let home = homeTerminalScope { openIndependentTerminal(in: .window(home)); return }
         if case .window(let windowID) = scope {
-            guard let selected = selectedTerminal(in: .window(windowID)),
-                  let id = openTerminal(selected.profile, detached: true, workingDirectory: selected.workingDirectory, windowID: windowID, directoryWorkspace: files(for: selected.profile, directoryID: selected.directoryWorkspaceID)),
+            guard let selected = selectedTerminal(in: .window(windowID)) else { return }
+            // A plain terminal belongs to no folder: the new one starts where this one is now.
+            let plain = homeTerminalScopes.values.contains(windowID)
+            let directory = plain ? selected.effectiveDirectory ?? (selected.profile == nil ? NSHomeDirectory() : nil) : selected.workingDirectory
+            guard let id = openTerminal(selected.profile, detached: true, workingDirectory: directory, useWorkspaceDirectory: !plain, windowID: windowID, directoryWorkspace: files(for: selected.profile, directoryID: selected.directoryWorkspaceID)),
                   let created = sessions.first(where: { $0.id == id }) else { return }
             activateTerminal(created)
-        } else { openWorkspaceTerminal() }
+        } else if page == .workspace { openWorkspaceTerminal() }
+        // With no workspace on screen there is no panel to add a terminal to: asking for one in
+        // the background started the selected server's editor, and a connection to it, unseen.
+        else if page == .recent { openHomeTerminal(nil) }
     }
-    var currentTerminalScope: TerminalScope { selectedDirectoryID.map { .directory(selectedProfileID, $0) } ?? .workspace(selectedProfileID) }
+    /// The pane before or after the one in use, in the order they are laid out, and around at the ends.
+    func focusTerminalPane(_ step: Int, in scope: TerminalScope) {
+        let layout = arrangement(in: scope)
+        guard let ids = layout.visible?.sessionIDs, ids.count > 1, let selected = layout.selectedGroup?.selectedID,
+              let index = ids.firstIndex(of: selected) else { return }
+        let next = ids[((index + step) % ids.count + ids.count) % ids.count]
+        if let session = sessions.first(where: { $0.id == next }) { activateTerminal(session) }
+    }
+    /// The tab before or after the one on screen, and around at the ends.
+    func cycleTerminalGroup(_ step: Int, in scope: TerminalScope) {
+        let groups = arrangement(in: scope).groups
+        guard groups.count > 1, let current = arrangement(in: scope).selectedGroup, let index = groups.firstIndex(where: { $0.id == current.id }) else { return }
+        activateTerminalGroup(groups[((index + step) % groups.count + groups.count) % groups.count].id, in: scope)
+    }
+    var currentTerminalScope: TerminalScope {
+        if page == .terminal, let scope = homeTerminalScope { return .window(scope) }
+        return selectedDirectoryID.map { .directory(selectedProfileID, $0) } ?? .workspace(selectedProfileID)
+    }
     func terminalScope(of session: TerminalSession) -> TerminalScope {
         session.windowID.map(TerminalScope.window) ?? session.directoryWorkspaceID.map { .directory(session.profile?.id, $0) } ?? .workspace(session.profile?.id)
     }
@@ -31,6 +82,16 @@ extension AppStore {
         let layout = arrangement(in: scope)
         return sessions.first { $0.id == layout.selectedID }
     }
+    /// A terminal is presented when it is in the visible split group of its scope.
+    func isTerminalPresented(_ session: TerminalSession, in scope: TerminalScope) -> Bool {
+        guard terminalScope(of: session) == scope,
+              arrangement(in: scope).visible?.contains(session.id) == true else { return false }
+        if case .window = scope { return true }
+        guard page == .workspace, currentTerminalScope == scope else { return false }
+        guard currentFiles.enabled else { return true }
+        guard currentFiles.terminalVisible else { return false }
+        return true
+    }
     func registerTerminal(_ session: TerminalSession) {
         let scope = terminalScope(of: session)
         var layout = arrangement(in: scope); layout.insert(session.id); terminalLayouts[scope] = layout
@@ -39,11 +100,9 @@ extension AppStore {
             // AppKit can deliver the old pane's focus callback while SwiftUI is
             // replacing it. Only panes in the current presentation may select.
             let scope = self.terminalScope(of: session)
-            guard self.arrangement(in: scope).visible?.contains(session.id) == true else { return }
+            guard self.isTerminalPresented(session, in: scope) else { return }
             if !session.detached {
-                guard self.page == .workspace, self.currentTerminalScope == scope else { return }
                 if self.currentFiles.enabled {
-                    guard self.currentFiles.terminalVisible, self.selectedSessionID == session.id else { return }
                     self.currentFiles.focusArea = .terminal
                 }
             }
@@ -64,28 +123,54 @@ extension AppStore {
         } else if requestFocus { currentFiles.requestFocus(.terminal) }
     }
     func splitTerminal(_ axis: TerminalSplitAxis, session: TerminalSession? = nil) {
-        var source = session ?? activeSession
-        if source == nil { openWorkspaceTerminal(); source = activeSession }
+        var source = session ?? (page == .terminal ? homeTerminal : activeSession)
+        if source == nil {
+            // Only where a workspace is on screen. (From the start page this started the selected
+            // server's editor in the background, with a connection nobody had asked for.)
+            guard page == .workspace else { return }
+            openWorkspaceTerminal(); source = activeSession
+        }
         guard let source else { return }
         if source.profile != nil, source.ready {
-            Task { await refreshTerminalDirectories([source]); completeTerminalSplit(axis, source: source) }
+            enqueueTerminalSplit(axis, source: source, refresh: { [weak self, weak source] in
+                guard let self, let source, !source.ended else { return }
+                // Keep the fresh remote lookup: cached OSC/cwd values can lag a
+                // just-entered `cd`, so skipping it may start in the wrong folder.
+                await self.refreshTerminalDirectories([source])
+            })
         } else { completeTerminalSplit(axis, source: source) }
     }
-    func completeTerminalSplit(_ axis: TerminalSplitAxis, source: TerminalSession) {
-        guard sessions.contains(where: { $0 === source }) else { return }
+    /// A remote directory lookup can outlive a workspace/group/focus change.
+    /// Finish creating the requested pane without navigating the user back.
+    func enqueueTerminalSplit(_ axis: TerminalSplitAxis, source: TerminalSession, refresh: @escaping @MainActor () async -> Void) {
+        let sourceScope = terminalScope(of: source)
+        let sourceGroup = arrangement(in: sourceScope).selectedGroup?.id
+        let requestedPage = page, requestedScope = currentTerminalScope
+        let requestedFocus = currentFiles.focusRequest
+        source.splitRequest.run(refresh: refresh, completion: { [weak self, weak source] in
+            guard let self, let source else { return }
+            let sameGroup = self.arrangement(in: sourceScope).selectedGroup?.id == sourceGroup
+            let activate = sameGroup && (source.detached ||
+                self.page == requestedPage && self.currentTerminalScope == requestedScope && self.currentFiles.focusRequest == requestedFocus)
+            self.completeTerminalSplit(axis, source: source, activate: activate)
+        })
+    }
+    func completeTerminalSplit(_ axis: TerminalSplitAxis, source: TerminalSession, activate: Bool = true) {
+        guard !source.ended, sessions.contains(where: { $0 === source }) else { return }
         let scope = terminalScope(of: source)
         let before = arrangement(in: scope)
         let files = files(for: source.profile, directoryID: source.directoryWorkspaceID)
         let directory = source.effectiveDirectory
-        guard let newID = openTerminal(source.profile, detached: source.detached, workingDirectory: directory, useWorkspaceDirectory: false, windowID: source.windowID, directoryWorkspace: files) else { return }
+        guard let newID = openTerminal(source.profile, detached: source.detached, workingDirectory: directory, useWorkspaceDirectory: false, windowID: source.windowID, directoryWorkspace: files, activate: activate) else { return }
         var layout = before
         if let group = layout.groups.first(where: { $0.layout.contains(source.id) }), group.title == nil {
             let name = sessions.first(where: { $0.id == group.sessionIDs.first })?.tabTitle ?? source.tabTitle
             layout.setTitle(name, for: group.id)
         }
         layout.split(source.id, adding: newID, axis: axis)
+        if !activate, let selected = before.selectedID { layout.select(selected) }
         terminalLayouts[scope] = layout
-        if !source.detached { files.terminalVisible = true; files.requestFocus(.terminal) }
+        if activate && !source.detached { files.terminalVisible = true; files.requestFocus(.terminal) }
     }
     func resizeTerminalSplit(_ splitID: UUID, in scope: TerminalScope, ratio: Double) {
         var layout = arrangement(in: scope); layout.resize(splitID, ratio: ratio); terminalLayouts[scope] = layout

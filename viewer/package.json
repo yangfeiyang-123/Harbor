@@ -4,7 +4,7 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
-    "build": "vite build && cp node_modules/@nvidia/omniverse-webrtc-streaming-library/LICENSE.txt dist/NVIDIA-LICENSE.txt"
+    "build": "vite build && cp node_modules/@nvidia/omniverse-webrtc-streaming-library/LICENSE.txt ../Sources/HarborSSH/Resources/Simulation/viewer/NVIDIA-LICENSE.txt"
   },
   "dependencies": {
     "@nvidia/omniverse-webrtc-streaming-library": "5.6.0"

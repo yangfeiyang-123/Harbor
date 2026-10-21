@@ -6,14 +6,14 @@ final class RecentWorkspaceTests: XCTestCase {
         let first = ServerProfile(name: "Renamed Server", host: "a.invalid"), second = ServerProfile(name: "Research", host: "b.invalid")
         let entries = [
             RecentWorkspace(serverID: first.id, serverName: "Old Name", directory: "/old", openedAt: Date(timeIntervalSince1970: 1)),
-            RecentWorkspace(serverID: nil, serverName: "本机", directory: "/Users/demo/项目"),
+            RecentWorkspace(serverID: nil, serverName: "本机", directory: "/Users/felix/项目"),
             RecentWorkspace(serverID: second.id, serverName: "Research", directory: "/same"),
             RecentWorkspace(serverID: first.id, serverName: "Old Name", directory: "/same", openedAt: Date(timeIntervalSince1970: 2))
         ]
         let groups = RecentWorkspaceGroup.make(entries, profiles: [second, first])
-        XCTAssertEqual(groups.map(\.name), ["Research", "Renamed Server", "Local"])
+        XCTAssertEqual(groups.map(\.name), ["Research", "Renamed Server", LocalMachine.name])
         XCTAssertEqual(groups[1].entries.map(\.directory), ["/same", "/old"])
-        XCTAssertEqual(groups[2].entries.first?.directory, "/Users/demo/项目")
+        XCTAssertEqual(groups[2].entries.first?.directory, "/Users/felix/项目")
         XCTAssertEqual(RecentWorkspaceGroup.make(entries, profiles: [first, second], query: "renamed").map(\.serverID), [first.id])
         XCTAssertEqual(RecentWorkspaceGroup.make(entries, profiles: [first, second], query: "same").count, 2)
         XCTAssertTrue(RecentWorkspaceGroup.make(entries, profiles: [first, second], query: "missing").isEmpty)

@@ -69,6 +69,27 @@ def directory_stamp(path):
     s = os.stat(path)
     return str(s.st_ino) + ':' + str(s.st_mtime_ns)
 
+def preview_path(path, root):
+    if not root: raise ValueError('An HTML preview folder is required.')
+    root = os.path.realpath(os.path.expanduser(root))
+    path = os.path.realpath(path)
+    if os.path.commonpath([root, path]) != root or path == root or any(part.startswith('.') for part in os.path.relpath(path, root).split(os.sep)):
+        raise ValueError('This resource is outside the HTML preview folder.')
+    return path
+
+def preview_info(s):
+    if not stat.S_ISREG(s.st_mode): raise ValueError('This HTML resource is not a regular file.')
+    return dict(size=s.st_size, version=':'.join(map(str, (s.st_dev, s.st_ino, s.st_size, s.st_mtime_ns))))
+
+def text(name):
+    # A name that is not UTF-8 (Latin-1 or GBK bytes from an old archive) comes from the system
+    # with its odd bytes as lone surrogates, which JSON cannot carry: one such name made the whole
+    # folder unreadable to the app. It is listed with a replacement character instead.
+    try:
+        name.encode('utf-8'); return name
+    except UnicodeEncodeError:
+        return name.encode('utf-8', 'surrogateescape').decode('utf-8', 'replace')
+
 def list_directory(path, hidden=False):
     stamp = directory_stamp(path)
     entries, truncated = [], False
@@ -80,11 +101,11 @@ def list_directory(path, hidden=False):
                 break
             try:
                 s = entry.stat()
-                entries.append(dict(path=entry.path, name=entry.name, directory=stat.S_ISDIR(s.st_mode), size=s.st_size, modified=s.st_mtime))
+                entries.append(dict(path=text(entry.path), name=text(entry.name), directory=stat.S_ISDIR(s.st_mode), size=s.st_size, modified=s.st_mtime))
             except OSError:
-                entries.append(dict(path=entry.path, name=entry.name, directory=False, size=0, modified=0))
+                entries.append(dict(path=text(entry.path), name=text(entry.name), directory=False, size=0, modified=0))
     entries.sort(key=lambda e: (not e['directory'], e['name'].casefold()))
-    return dict(path=path, entries=entries, truncated=truncated, stamp=stamp)
+    return dict(path=text(path), entries=entries, truncated=truncated, stamp=stamp)
 
 def no_replace(source, target):
     import ctypes, errno
@@ -290,8 +311,25 @@ try:
             except OSError as error: update['error'] = str(error)
             result['files'].append(update)
         print(json.dumps(result))
+    elif op in ('preview-stat', 'preview-read'):
+        path = preview_path(path, request.get('previewRoot'))
+        with os.fdopen(os.open(path, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW), 'rb', buffering=0) as source:
+            info = preview_info(os.fstat(source.fileno()))
+            if op == 'preview-stat': print(json.dumps(info))
+            else:
+                offset, count = int(request['offset']), int(request['count'])
+                if offset < 0 or not 0 < count <= 1024 * 1024 or offset > info['size'] or count > info['size'] - offset:
+                    raise ValueError('Invalid HTML resource byte range.')
+                if request.get('version') != info['version']: raise ValueError('This media file changed. Reload the HTML preview.')
+                source.seek(offset)
+                data = source.read(count)
+                if len(data) != count or preview_info(os.fstat(source.fileno())) != info:
+                    raise ValueError('This media file changed. Reload the HTML preview.')
+                output = PacedOutput(request.get('paced')); output.write(data); output.flush()
     elif op == 'read':
         limit = min(int(request['limit']), 512 * 1024 * 1024)
+        if request.get('previewRoot'):
+            path = preview_path(path, request['previewRoot'])
         with os.fdopen(os.open(path, os.O_RDONLY | os.O_NONBLOCK), 'rb', buffering=0) as source:
             s = os.fstat(source.fileno())
             if not stat.S_ISREG(s.st_mode) or s.st_size > limit: raise ValueError('This is not a regular file, or it exceeds the preview size limit.')

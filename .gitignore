@@ -23,3 +23,12 @@ TerminalRecovery/
 .ssh/
 *.pem
 *.key
+
+# Local tools, dependency installs, backups and diagnostics.
+.omc/
+.repair-backups/
+Claude outputs/
+*.sample.txt
+harbor-system.txt
+Sources/HarborSSH/Resources/Simulation/viewer/assets/
+Sources/HarborSSH/Resources/Simulation/viewer/NVIDIA-LICENSE.txt

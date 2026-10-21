@@ -14,21 +14,25 @@ struct ProxyContent: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
+                ManagedProxyCard(controller: controller)
                 HStack {
-                    VStack(alignment: .leading, spacing: 5) { Text("Port Forwarding").harborFont(16, weight: .semibold); Text("Remote forwarding, local forwarding, and SOCKS5 using your server’s SSH key authentication.").harborFont(11).foregroundStyle(Color.harborMuted) }
+                    VStack(alignment: .leading, spacing: 5) { Text("Custom Forwarding").harborFont(16, weight: .semibold); Text("Remote forwarding, local forwarding, and SOCKS5, with your server’s SSH key or the password Harbor keeps for it.").harborFont(11).foregroundStyle(Color.harborMuted) }
                     Spacer()
                     Button { if let p = store.selectedProfile ?? store.profiles.first { editing = ForwardRule(serverID: p.id) } } label: { Label("Add Forwarding", systemImage: "plus") }
                         .buttonStyle(.borderedProminent).disabled(store.profiles.isEmpty)
                 }
                 if store.rules.isEmpty {
-                    ContentUnavailableView("No Port Forwarding Yet", systemImage: "arrow.left.arrow.right", description: Text(store.profiles.isEmpty ? "Add a server in the workbench first." : "Use a local proxy from your server, or access a remote web service on your Mac."))
+                    ContentUnavailableView("No Custom Forwarding Yet", systemImage: "arrow.left.arrow.right", description: Text(store.profiles.isEmpty ? "Add a server on the start page first." : "Use a local proxy from your server, or access a remote web service on your Mac."))
                         .frame(maxWidth: .infinity).padding(.vertical, 30)
                 }
                 ForEach(store.rules) { rule in
                     ruleCard(rule)
                 }
-            }.padding(30)
+            }
+            // One calm column, as on the start page, however wide the window is.
+            .frame(maxWidth: 980).padding(.horizontal, 30).padding(.top, 14).padding(.bottom, 30).frame(maxWidth: .infinity)
         }
+        .task { if controller.managedSnapshot.values.isEmpty { await controller.managed("status") } }
         .sheet(item: $editing) { rule in
             ForwardEditor(rule: rule, profiles: store.profiles) { updated in
                 if let i = store.rules.firstIndex(where: { $0.id == updated.id }) { store.rules[i] = updated }
@@ -62,6 +66,78 @@ struct ProxyContent: View {
             }
         }.padding(20).background(Color.harborWidget, in: RoundedRectangle(cornerRadius: 12))
             .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.harborBorder))
+    }
+}
+
+struct ManagedProxyCard: View {
+    @ObservedObject var controller: ProxyController
+    @State private var details = false
+    @State private var stopping = false
+    var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            HStack {
+                Label("Server Reverse Proxy", systemImage: "network").harborFont(13, weight: .semibold)
+                Spacer()
+                if controller.managedBusy { HarborProgressBar(width: 44) }
+                Text(controller.managedSnapshot.modeLabel).harborFont(11).padding(.horizontal, 9).padding(.vertical, 5).background(Color.harborAccent.opacity(0.10), in: Capsule())
+            }
+            Text("Switch network routes, inspect tunnels, and verify requests in Harbor. Managed proxies can keep running after you quit.").harborFont(12).foregroundStyle(Color.harborMuted)
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 14) { hostCard("A100", name: "A100", port: "11088"); hostCard("RTX", name: "RTX 4090", port: "11083") }
+                VStack(spacing: 12) { hostCard("A100", name: "A100", port: "11088"); hostCard("RTX", name: "RTX 4090", port: "11083") }
+            }
+            HStack(spacing: 12) {
+                indicator("aTrust Network", key: "ROUTE")
+                indicator("Local Gateway", key: "GATEWAY")
+                indicator("Health Check", key: "HEALTH")
+            }.harborFont(11)
+            ViewThatFits(in: .horizontal) {
+                HStack { modeButtons; Spacer(); checkButtons }
+                VStack(alignment: .leading, spacing: 10) { modeButtons; checkButtons }
+            }.disabled(controller.managedBusy)
+            if let error = controller.managedError { Label(error, systemImage: "exclamationmark.circle").harborFont(11).foregroundStyle(.orange) }
+            DisclosureGroup("Runtime Details", isExpanded: $details) {
+                VStack(alignment: .leading, spacing: 12) {
+                    HStack {
+                        Button("Load Logs") { Task { await controller.managed("logs") } }
+                        Spacer()
+                        Button("Stop Managed Proxies", role: .destructive) { stopping = true }
+                    }.disabled(controller.managedBusy)
+                    Text(controller.managedStatus).harborFont(10, design: .monospaced).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
+                }.padding(.top, 10)
+            }.harborFont(11)
+        }.padding(20).background(Color.harborWidget, in: RoundedRectangle(cornerRadius: 12))
+            .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.harborBorder))
+            .alert("Stop the managed proxies on both servers?", isPresented: $stopping) {
+                Button("Cancel", role: .cancel) {}
+                Button("Stop Proxy", role: .destructive) { Task { await controller.managed("stop") } }
+            } message: { Text("The servers will lose access through your local proxy. You can enable the proxies again on this page.") }
+    }
+    private var modeButtons: some View {
+        HStack {
+            Button("US Direct") { Task { await controller.managed("usa") } }
+            Button("China Proxy") { Task { await controller.managed("china") } }
+        }
+    }
+    private var checkButtons: some View {
+        HStack {
+            Button { Task { await controller.managed("status") } } label: { HarborSymbol(systemName: "arrow.clockwise") }.help("Refresh Status")
+            Button("Verify Connection") { Task { await controller.managed("check") } }.buttonStyle(.borderedProminent)
+        }
+    }
+    private func indicator(_ label: String, key: String) -> some View {
+        HStack(spacing: 5) { Circle().fill(controller.managedSnapshot.isUp(key) ? Color.harborAccent : .secondary.opacity(0.4)).frame(width: 5, height: 5); Text(label).foregroundStyle(Color.harborMuted).lineLimit(1) }
+    }
+    private func hostCard(_ key: String, name: String, port: String) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack { HarborSymbol(systemName: "cpu").foregroundStyle(Color.harborAccent); Text(name).harborFont(13, weight: .semibold); Spacer() }
+            Text("Remote port \(controller.managedSnapshot.values["\(key)_PORT"].flatMap { $0.isEmpty ? nil : $0 } ?? port)").harborFont(11).foregroundStyle(Color.harborMuted)
+            if controller.verifiedHosts.contains(key), let date = controller.managedVerifiedAt {
+                Label("HTTP 204 · Verified at \(date.formatted(date: .omitted, time: .shortened))", systemImage: "checkmark.circle.fill").harborFont(11).foregroundStyle(Color.harborAccent)
+            } else {
+                Label(controller.managedSnapshot.isUp("\(key)_JOB") ? "Tunnel running · Unverified" : "Tunnel not running", systemImage: "circle.dashed").harborFont(11).foregroundStyle(Color.harborMuted)
+            }
+        }.padding(14).frame(minWidth: 190, maxWidth: .infinity, alignment: .leading).background(Color.harborBackground, in: RoundedRectangle(cornerRadius: 8))
     }
 }
 

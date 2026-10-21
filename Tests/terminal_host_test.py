@@ -46,10 +46,12 @@ class HostTests(unittest.TestCase):
         for suffix in ['.lock', '.state']:
             Path(self.base + suffix).unlink(missing_ok=True)
 
-    def client(self, mode, rows=24, cols=80, framed=False):
+    def client(self, mode, rows=24, cols=80, framed=False, sanitize=False, env=None):
         proc = subprocess.Popen([sys.executable, str(HOST), mode, self.sid,
-            '--directory', '/tmp', '--rows', str(rows), '--cols', str(cols)] + (['--framed'] if framed else []),
-            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+            '--directory', '/tmp', '--rows', str(rows), '--cols', str(cols)] + (['--framed'] if framed else [])
+            + (['--sanitize-replay'] if sanitize else []),
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            env=None if env is None else dict(os.environ, **env))
         self.clients.append(proc)
         return proc
 
@@ -103,12 +105,99 @@ class HostTests(unittest.TestCase):
             data = self.until(proc, b'REDRAW_')
             self.assertIn(b'columns=111, lines=37', data)
 
+    def test_shell_gets_the_account_umask_and_default_sigpipe(self):
+        # The connection's first process records the umask it was started with (here 027).
+        first = self.client('create', env={'HARBOR_UMASK': '27'})
+        self.until(first, b'7777;' + self.sid.encode())
+        self.send(first, 'echo "mask=$(umask)" "left=${HARBOR_UMASK:-none}"\n')
+        self.assertRegex(self.until(first, b'left=none'), rb'mask=0*27 ')
+        # A writer whose reader has left ends by SIGPIPE (status 141), without a "Broken pipe" report.
+        self.send(first, '( yes; echo "writer=$?" >&2 ) | head -n 1 >/dev/null\n')
+        self.until(first, b'writer=141')
+
+    def test_a_client_that_is_behind_slows_the_shell_and_loses_nothing(self):
+        first = self.client('create')
+        self.until(first, b'7777;' + self.sid.encode())
+        # Six megabytes, more than the host ever queues, while this client reads nothing.
+        self.send(first, 'head -c 6000000 /dev/zero | tr "\\0" x; echo; echo TAIL-$((40+2))\n')
+        time.sleep(2.5)
+        data = self.until(first, b'TAIL-42', timeout=30)
+        self.assertGreaterEqual(data.count(b'x'), 6000000)
+        self.assertIsNone(first.poll())
+        self.send(first, 'echo STILL-$((1+1))\n')
+        self.until(first, b'STILL-2')
+
+    def test_a_client_that_takes_nothing_is_released_and_the_shell_goes_on(self):
+        first = self.client('create', env={'HARBOR_PTY_STALL': '2'})
+        self.until(first, b'7777;' + self.sid.encode())
+        marker = '/tmp/harbor-stall-' + self.sid
+        self.addCleanup(lambda: Path(marker).unlink(missing_ok=True))
+        self.send(first, 'head -c 6000000 /dev/zero | tr "\\0" x; echo done > ' + marker + '\n')
+        # Nothing is read here: the host lets go of this client, and the command completes.
+        for _ in range(150):
+            if os.path.exists(marker):
+                break
+            time.sleep(.1)
+        self.assertTrue(os.path.exists(marker))
+        second = self.client('attach')
+        self.until(second, b'7777;' + self.sid.encode())
+        self.send(second, 'echo BACK-$((1+1))\n')
+        self.until(second, b'BACK-2')
+        # The first connection was dropped, not ended: its status is not that of a shell that is gone.
+        while os.read(first.stdout.fileno(), 65536):
+            pass
+        self.assertEqual(first.wait(timeout=6), 0)
+
+    def test_what_a_shell_printed_last_arrives_however_slowly_it_is_read(self):
+        first = self.client('create')
+        self.until(first, b'7777;' + self.sid.encode())
+        # Less than the host holds back for, more than the connection takes unread: the shell is
+        # over while most of it still waits here.
+        self.send(first, 'head -c 800000 /dev/zero | tr "\\0" x; echo; echo TAIL-$((40+2)); exit\n')
+        time.sleep(2.5)
+        data = self.until(first, b'remote terminal ended', timeout=30)
+        self.assertGreaterEqual(data.count(b'x'), 800000)
+        self.assertIn(b'TAIL-42', data)
+        # And the connection says that its shell has ended: there is nothing to reconnect to.
+        self.assertEqual(first.wait(timeout=6), host.ENDED)
+
+    def test_closing_a_terminal_whose_shell_has_ended_succeeds(self):
+        first = self.client('create')
+        self.until(first, b'7777;' + self.sid.encode())
+        self.send(first, 'exit\n')
+        self.assertEqual(first.wait(timeout=6), host.ENDED)
+        closing = self.client('close')
+        closing.wait(timeout=6)
+        self.assertEqual(closing.returncode, 0)
+        self.assertEqual(closing.stdout.read(), b'')
+
     def test_missing_session_never_silently_starts_shell(self):
         proc = self.client('attach')
         output = proc.communicate(timeout=5)[0]
-        self.assertNotEqual(proc.returncode, 0)
+        # Its own exit status: the app tells "that shell is gone" from a connection that failed.
+        self.assertEqual(proc.returncode, 3)
         self.assertIn(b'Previous remote process is no longer available', output)
         self.assertFalse(Path(self.base + '.state').exists())
+
+    def test_sanitized_raw_attachment_preserves_process_and_user_input(self):
+        first = self.client('create')
+        self.until(first, b'7777;')
+        program = ("import os,tty;tty.setraw(0);"
+                   "os.write(1,b'\\x1b[6n'+b'HIST_'+b'QUERY_'+str(os.getpid()).encode()+b'\\n');"
+                   "data=os.read(0,4096);"
+                   "os.write(1,b'\\x1b[6n'+b'INPUT_'+b'RECORD_'+data.hex().encode()+b'\\n')")
+        self.send(first, 'exec python3 -c ' + shlex.quote(program) + '\n')
+        data = self.until(first, b'HIST_QUERY_')
+        self.assertIn(b'\x1b[6n', data)
+        pid = json.loads(Path(self.base + '.state').read_text())['pid']
+        first.kill(); first.wait()
+        second = self.client('attach', sanitize=True)
+        history = self.until(second, b'HIST_QUERY_')
+        self.assertNotIn(b'\x1b[6n', history)
+        self.assertEqual(pid, json.loads(Path(self.base + '.state').read_text())['pid'])
+        self.send(second, 'hello')
+        live = self.until(second, b'INPUT_RECORD_68656c6c6f')
+        self.assertIn(b'\x1b[6n', live, 'live terminal queries still reach the real renderer')
 
     def test_full_screen_foreground_program_keeps_running_and_accepts_input(self):
         first = self.client('create')
@@ -164,6 +253,72 @@ print('\x1b[?1049lTUI_FINISHED',flush=True)
         self.assertNotIn(b'52;', data)
         self.assertIn(b'helloworld', data)
         self.assertNotIn(b'partial', host.replay([b'partial\nwhole\n'], True))
+        self.assertNotIn(b'View Saved Output', host.replay([b'partial\nwhole\n'], True))
+
+    def test_old_host_banner_removed_across_transport_chunks_without_touching_live_output(self):
+        raw = host.ReplayStartFilter.legacy + b'Previous answer\r\n\x1b]7777;token;123\x07'
+        for split in range(1, len(raw)):
+            stream = host.ReplayStartFilter()
+            restored = stream.feed(raw[:split]) + stream.feed(raw[split:])
+            self.assertEqual(restored, host.ReplayStartFilter.reset + raw[len(host.ReplayStartFilter.legacy):])
+            self.assertEqual(stream.feed(raw), raw)
+
+    def test_replay_filter_keeps_current_output_byte_exact(self):
+        for raw in [b'\x1bc\x1b[3Jnew history\r\n', b'other output', b'\x1bc']:
+            stream = host.ReplayStartFilter()
+            result = b''.join(stream.feed(bytes([value])) for value in raw)
+            self.assertEqual(result + stream.feed(b'', final=True), raw)
+
+
+class ReplayQueryTests(unittest.TestCase):
+    session = '12b11579-5d87-4b8e-a537-590b5cec602c'
+
+    @property
+    def boundary(self):
+        return ('\x1b]7777;' + self.session + ';4321\x07').encode()
+
+    def test_fragmented_queries_removed_but_live_queries_survive_every_split(self):
+        queries = [b'\x1b[6n', b'\x1b[?6n', b'\x1b[c', b'\x1b[>0c', b'\x1b[=0c',
+                   b'\x1b[?2026$p', b'\x1b[>q', b'\x1b[?u', b'\x1b[?1;1;0S', b'\x1b[18t', b'\x1b[1x', b'\x1bZ',
+                   b'\x1b]10;?\x07', b'\x1b]11;?\x1b\\', b'\x1b]4;7;?\x07',
+                   b'\x1bP$qm\x1b\\', b'\x1bP+q544e\x1b\\']
+        drawing = 'saved 中文'.encode() + b'\x1b[31mred\x1b[0m\x1b[2J\x1b[3;5H\x1b[8;24;80t'
+        for query in queries:
+            raw = drawing + query + self.boundary + query + b'LIVE'
+            expected = drawing + query + b'LIVE'
+            for split in range(len(raw) + 1):
+                stream = host.ReplayQueryFilter(self.session)
+                self.assertEqual(stream.feed(raw[:split]) + stream.feed(raw[split:]), expected, (query, split))
+            stream = host.ReplayQueryFilter(self.session)
+            self.assertEqual(b''.join(stream.feed(bytes([byte])) for byte in raw), expected)
+
+    def test_color_assignments_and_non_query_controls_are_preserved(self):
+        raw = (b'\x1bc\x1b[3J\x1b]4;0;?;1;#ff0000\x07'
+               b'\x1b]10;?;#abcdef\x1b\\\x1b]0;Window title\x07\x1bP0qimage\x1b\\')
+        expected = (b'\x1bc\x1b[3J\x1b]4;1;#ff0000\x07'
+                    b'\x1b]11;#abcdef\x1b\\\x1b]0;Window title\x07\x1bP0qimage\x1b\\')
+        stream = host.ReplayQueryFilter(self.session)
+        self.assertEqual(b''.join(stream.feed(bytes([byte])) for byte in raw) + stream.feed(self.boundary), expected)
+
+    def test_other_session_markers_do_not_end_filter_and_old_clipboard_is_removed(self):
+        wrong = b'\x1b]7777;other-session;4321\x07'
+        stream = host.ReplayQueryFilter(self.session)
+        self.assertEqual(stream.feed(wrong + b'\x1b[6n\x1b]52;c;c2VjcmV0\x07'), wrong)
+        self.assertFalse(stream.finished)
+        self.assertEqual(stream.feed(self.boundary + b'\x1b[6n'), b'\x1b[6n')
+        self.assertTrue(stream.finished)
+
+    def test_incomplete_replay_control_does_not_escape_at_eof(self):
+        for suffix in (b'\x1b', b'\x1b[?', b'\x1b]10;?', b'\x1bP$qm'):
+            stream = host.ReplayQueryFilter(self.session)
+            self.assertEqual(stream.feed(b'Saved answer\n' + suffix) + stream.feed(b'', final=True), b'Saved answer\n')
+
+    def test_daemon_boundary_ends_a_truncated_control_without_buffering_live_output(self):
+        for suffix in (b'\x1bP$qunfinished', b'\x1b]10;unfinished'):
+            raw = b'Saved answer\n' + suffix + self.boundary + b'LIVE\x1b[6n'
+            for split in range(len(raw) + 1):
+                stream = host.ReplayQueryFilter(self.session)
+                self.assertEqual(stream.feed(raw[:split]) + stream.feed(raw[split:]), b'Saved answer\nLIVE\x1b[6n')
 
 
 if __name__ == '__main__':

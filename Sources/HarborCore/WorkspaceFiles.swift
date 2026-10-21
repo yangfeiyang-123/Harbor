@@ -22,41 +22,9 @@ public struct WorkspaceListing: Codable, Sendable {
         self.path = path; self.entries = entries; self.truncated = truncated; self.stamp = stamp
     }
 }
-public struct WorkspaceDirectoryRequest: Codable, Sendable {
-    public let path: String
-    public let stamp: String?
-    public init(path: String, stamp: String? = nil) { self.path = path; self.stamp = stamp }
-}
-public struct WorkspaceDirectoryUpdate: Codable, Sendable {
-    public let path: String
-    public let listing: WorkspaceListing?
-    public let error: String?
-}
-public struct WorkspaceFileUpdate: Codable, Sendable {
-    public let path: String
-    public let entry: WorkspaceEntry?
-    public let error: String?
-}
-public struct WorkspaceRefresh: Codable, Sendable {
-    public let directories: [WorkspaceDirectoryUpdate]
-    public let files: [WorkspaceFileUpdate]
-}
 public enum WorkspaceError: LocalizedError {
     case message(String)
     public var errorDescription: String? { if case .message(let s) = self { return s }; return nil }
-}
-public enum WorkspaceFileKind: String, Sendable {
-    case text, markdown, pdf, image, video, audio
-    public static func classify(_ path: String) -> Self {
-        switch (path as NSString).pathExtension.lowercased() {
-        case "md", "markdown", "mdown": return .markdown
-        case "pdf": return .pdf
-        case "png", "jpg", "jpeg", "gif", "tiff", "heic", "webp", "bmp": return .image
-        case "mp4", "mov", "m4v", "webm", "mkv": return .video
-        case "mp3", "m4a", "wav", "aiff", "aac", "flac": return .audio
-        default: return .text
-        }
-    }
 }
 public enum WorkspacePath {
     public static func local(_ path: String) -> URL {
@@ -104,14 +72,14 @@ public enum FileProcess {
     /// process. With `stallTimeout`, a transfer ends when neither stdin nor the output file moved
     /// for that long; `timeout` stays the absolute limit. A paced transfer can take hours, so a
     /// short absolute limit would kill it while it is making progress.
-    public static func run(_ executable: String, arguments: [String], input: Data, output: URL, timeout: TimeInterval = 120, inputFile: URL? = nil,
+    public static func run(_ executable: String, arguments: [String], input: Data, output: URL, timeout: TimeInterval = 120, inputFile: URL? = nil, inputOffset: UInt64 = 0,
                            pacer: TransferPacer? = nil, stallTimeout: TimeInterval? = nil,
                            progress: (@Sendable (FileProcessProgress) -> Void)? = nil) async throws {
         let cancellation = FileProcessCancellation()
         try await withTaskCancellationHandler {
             try Task.checkCancellation()
             try await Task.detached(priority: .utility) {
-                try runSync(executable, arguments: arguments, input: input, output: output, timeout: timeout, cancellation: cancellation, inputFile: inputFile, pacer: pacer, stallTimeout: stallTimeout, report: progress)
+                try runSync(executable, arguments: arguments, input: input, output: output, timeout: timeout, cancellation: cancellation, inputFile: inputFile, inputOffset: inputOffset, pacer: pacer, stallTimeout: stallTimeout, report: progress)
             }.value
             try Task.checkCancellation()
         } onCancel: { cancellation.cancel(); pacer?.cancel() }
@@ -139,7 +107,7 @@ public enum FileProcess {
         }
         return true
     }
-    private static func runSync(_ executable: String, arguments: [String], input: Data, output: URL, timeout: TimeInterval, cancellation: FileProcessCancellation, inputFile: URL?,
+    private static func runSync(_ executable: String, arguments: [String], input: Data, output: URL, timeout: TimeInterval, cancellation: FileProcessCancellation, inputFile: URL?, inputOffset: UInt64 = 0,
                                 pacer: TransferPacer?, stallTimeout: TimeInterval?, report: (@Sendable (FileProcessProgress) -> Void)?) throws {
             try cancellation.check()
             let fm = FileManager.default, scratch = fm.temporaryDirectory.appendingPathComponent("harbor-io-" + UUID().uuidString)
@@ -151,6 +119,8 @@ public enum FileProcess {
             fm.createFile(atPath: output.path, contents: nil, attributes: [.posixPermissions: 0o600])
             let source = try FileHandle(forReadingFrom: inputFile ?? request), sink = try FileHandle(forWritingTo: output), errorSink = try FileHandle(forWritingTo: errors)
             defer { try? source.close(); try? sink.close(); try? errorSink.close() }
+            // Continue an interrupted upload: the child inherits this position.
+            if inputOffset > 0 { try source.seek(toOffset: inputOffset) }
             let process = Process(), done = DispatchSemaphore(value: 0)
             let feed = pacer == nil ? nil : Pipe(), fed = Progress(), feeding = DispatchGroup()
             // A terminal opened during the upload is forked without descriptor hygiene (SwiftTerm, forkpty). With
@@ -225,18 +195,20 @@ public struct WorkspaceFileService: Sendable {
     public let socket: String?
     public let script: String
     public let cache: URL
+    let sshConnection: WorkspaceSSHConnection?
     /// Set for servers that may sit behind the managed reverse tunnel; see `TransferPacer`.
     public let relay: TransferRelayLookup?
     /// A paced transfer runs at what the VPN path carries, so it is bounded by lack of progress, not by total time.
     static let pacedLimit: TimeInterval = 86_400, pacedStall: TimeInterval = 900
     public init(profile: ServerProfile?, socket: String?, script: String, cache: URL, relay: TransferRelayLookup? = nil) {
         self.profile = profile; self.socket = socket; self.script = script; self.cache = cache; self.relay = relay
+        sshConnection = profile.flatMap { p in socket.map { WorkspaceSSHConnection(profile: p, socket: $0) } }
     }
     /// `bulk` marks a reply that can be large: behind the tunnel the server paces it (files.py, PacedOutput).
     /// A large request body is paced here the same way.
     func remote(_ request: [String: Any], destination: URL? = nil, timeout: TimeInterval = 120, bulk: Bool = false,
                 progress: (@Sendable (FileProcessProgress) -> Void)? = nil) async throws -> Data {
-        guard let profile, let socket else { throw WorkspaceError.message("Connect to this server first.") }
+        guard let sshConnection else { throw WorkspaceError.message("Connect to this server first.") }
         var request = request, input = try JSONSerialization.data(withJSONObject: request)
         let port = bulk || input.count > 65_536 ? await relay?() : nil
         if bulk, port != nil { request["paced"] = true; input = try JSONSerialization.data(withJSONObject: request) }
@@ -244,9 +216,11 @@ public struct WorkspaceFileService: Sendable {
         defer { if destination == nil { try? FileManager.default.removeItem(at: output) } }
         let command = "python3 -c " + SSHArguments.quote(script)
         do {
-            try await FileProcess.run("/usr/bin/ssh", arguments: SSHArguments.probe(profile, socket: socket, command: command), input: input, output: output,
-                                      timeout: port == nil ? timeout : max(timeout, Self.pacedLimit),
-                                      pacer: port.flatMap { input.count > 65_536 ? TransferPacer(port: $0) : nil }, stallTimeout: port == nil ? nil : Self.pacedStall, progress: progress)
+            try await sshConnection.run(command: command) { arguments in
+                try await FileProcess.run("/usr/bin/ssh", arguments: arguments, input: input, output: output,
+                                          timeout: port == nil ? timeout : max(timeout, Self.pacedLimit),
+                                          pacer: port.flatMap { input.count > 65_536 ? TransferPacer(port: $0) : nil }, stallTimeout: port == nil ? nil : Self.pacedStall, progress: progress)
+            }
         } catch {
             if destination != nil { try? FileManager.default.removeItem(at: output) }
             throw error
@@ -274,83 +248,9 @@ public struct WorkspaceFileService: Sendable {
             }.sorted { $0.directory != $1.directory ? $0.directory : $0.name.localizedStandardCompare($1.name) == .orderedAscending }
             return WorkspaceListing(path: root.path, entries: entries, truncated: urls.count > 10_000, stamp: stamp)
     }
-    /// One SSH channel checks directory stamps first and transfers only changed
-    /// lists. File contents are never read by the background refresh.
-    public func refresh(_ requests: [WorkspaceDirectoryRequest], files: [String] = [], showHidden: Bool = false) async throws -> WorkspaceRefresh {
-        guard requests.count <= 32, files.count <= 16 else { throw WorkspaceError.message("Too many directories requested in one refresh.") }
-        if profile != nil {
-            let directories = requests.map { request -> [String: Any] in
-                var value: [String: Any] = ["path": request.path]
-                if let stamp = request.stamp { value["stamp"] = stamp }; return value
-            }
-            return try JSONDecoder().decode(WorkspaceRefresh.self, from: await remote(["op": "refresh", "directories": directories, "files": files, "hidden": showHidden], timeout: 15))
-        }
-        return await Task.detached(priority: .utility) {
-            let directories = requests.map { request -> WorkspaceDirectoryUpdate in
-                do {
-                    let unchanged = request.stamp == (try Self.directoryStamp(request.path))
-                    return WorkspaceDirectoryUpdate(path: request.path, listing: unchanged ? nil : try Self.localListing(request.path, showHidden: showHidden), error: nil)
-                } catch { return WorkspaceDirectoryUpdate(path: request.path, listing: nil, error: error.localizedDescription) }
-            }
-            let updates = files.map { path -> WorkspaceFileUpdate in
-                do {
-                    let url = WorkspacePath.local(path), values = try url.resourceValues(forKeys: [.isDirectoryKey, .fileSizeKey, .contentModificationDateKey])
-                    return WorkspaceFileUpdate(path: path, entry: WorkspaceEntry(path: path, name: url.lastPathComponent, directory: values.isDirectory ?? false, size: Int64(values.fileSize ?? 0), modified: values.contentModificationDate?.timeIntervalSince1970 ?? 0), error: nil)
-                } catch { return WorkspaceFileUpdate(path: path, entry: nil, error: error.localizedDescription) }
-            }
-            return WorkspaceRefresh(directories: directories, files: updates)
-        }.value
-    }
-    public func materialize(_ entry: WorkspaceEntry, limit: Int64) async throws -> URL {
-        guard entry.size <= limit else { throw WorkspaceError.message("This file exceeds the \(limit / 1024 / 1024) MB preview limit. Open a terminal in its folder to work with it.") }
-        let destination = cache.appendingPathComponent(UUID().uuidString).appendingPathExtension((entry.path as NSString).pathExtension)
-        if profile != nil { _ = try await remote(["op": "read", "path": entry.path, "limit": limit], destination: destination, bulk: true) }
-        else {
-            try await Task.detached {
-                let url = WorkspacePath.local(entry.path), values = try url.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey])
-                guard values.isRegularFile == true, Int64(values.fileSize ?? 0) <= limit else { throw WorkspaceError.message("Only regular files within the preview size limit can be opened.") }
-                try FileManager.default.copyItem(at: url, to: destination)
-                try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: destination.path)
-            }.value
-        }
-        return destination
-    }
-    public func save(path: String, text: String, expectedDigest: String) async throws -> String {
-        let data = Data(text.utf8)
-        guard data.count <= 2 * 1024 * 1024 else { throw WorkspaceError.message("The code editor supports files up to 2 MB.") }
-        if profile != nil {
-            _ = try await remote(["op": "write", "path": path, "data": data.base64EncodedString(), "digest": expectedDigest])
-        } else {
-            try await Task.detached {
-                let url = WorkspacePath.local(path).resolvingSymlinksInPath()
-                let values = try url.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey])
-                guard values.isRegularFile == true, (values.fileSize ?? 0) <= 2 * 1024 * 1024 else { throw WorkspaceError.message("The file type or size has changed. Open it again.") }
-                let current = try Data(contentsOf: url)
-                guard WorkspacePath.digest(current) == expectedDigest else { throw WorkspaceError.message("Another application changed this file. It was not overwritten. Copy your changes before reloading.") }
-                let fm = FileManager.default, attributes = try fm.attributesOfItem(atPath: url.path)
-                let temporary = url.deletingLastPathComponent().appendingPathComponent(".harbor-save-" + UUID().uuidString)
-                defer { try? fm.removeItem(at: temporary) }
-                try data.write(to: temporary, options: .withoutOverwriting)
-                if let mode = attributes[.posixPermissions] { try fm.setAttributes([.posixPermissions: mode], ofItemAtPath: temporary.path) }
-                let now = try fm.attributesOfItem(atPath: url.path)
-                guard now[.systemFileNumber] as? NSNumber == attributes[.systemFileNumber] as? NSNumber,
-                      now[.modificationDate] as? Date == attributes[.modificationDate] as? Date,
-                      now[.size] as? NSNumber == attributes[.size] as? NSNumber else {
-                    throw WorkspaceError.message("The file changed while saving and was not overwritten. Reload it to continue.")
-                }
-                guard rename(temporary.path, url.path) == 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
-            }.value
-        }
-        return WorkspacePath.digest(data)
-    }
-    public func create(name: String, parent: String, directory: Bool) async throws {
-        let path = try WorkspacePath.child(name, in: parent)
-        if profile != nil { _ = try await remote(["op": directory ? "mkdir" : "create", "path": path]) }
-        else {
-            try await Task.detached {
-                if directory { try FileManager.default.createDirectory(at: WorkspacePath.local(path), withIntermediateDirectories: false) }
-                else { try Data().write(to: WorkspacePath.local(path), options: .withoutOverwriting) }
-            }.value
-        }
+    /// Working directories of remote terminal shells, by session token.
+    public func terminalDirectories(_ sessions: [(pid: Int32, token: String)]) async throws -> [String: String] {
+        guard profile != nil else { return [:] }
+        return try JSONDecoder().decode([String: String].self, from: await remote(["op": "cwd", "sessions": sessions.map { ["pid": $0.pid, "token": $0.token] as [String: Any] }], timeout: 8))
     }
 }
