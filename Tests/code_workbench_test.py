@@ -837,7 +837,7 @@ class DownloadTests(unittest.TestCase):
 
     # A stand-in for the editor: it listens where its config says, and writes down what it was started with.
     STUB = """#!%s
-import http.server, json, os, re, sys, time
+import http.server, json, os, re, sys, time, socketserver
 args = sys.argv[1:]
 port = int(re.search(r'127[.]0[.]0[.]1:([0-9]+)', open(args[args.index('--config') + 1]).read()).group(1))
 mask = os.umask(0); os.umask(mask)
@@ -853,7 +853,14 @@ class Handler(http.server.BaseHTTPRequestHandler):
             time.sleep(2.5)
         self.send_response(200); self.end_headers()
     def log_message(self, *args): pass
-http.server.ThreadingHTTPServer(('127.0.0.1', port), Handler).serve_forever()
+# This loopback fixture needs no reverse DNS. HTTPServer.server_bind otherwise
+# calls getfqdn before listening, and runner DNS delays can exceed startup limits.
+class LoopbackServer(http.server.ThreadingHTTPServer):
+    def server_bind(self):
+        socketserver.TCPServer.server_bind(self)
+        self.server_name = 'localhost'
+        self.server_port = self.server_address[1]
+LoopbackServer(('127.0.0.1', port), Handler).serve_forever()
 """ % sys.executable
 
     def service_fixture(self):
