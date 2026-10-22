@@ -864,7 +864,10 @@ def process_arguments(pid):
     except OSError:
         pass  # no /proc (macOS)
     try:
-        listing = subprocess.run(["ps", "-p", str(pid), "-o", "args="], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=3)
+        # The supervisor's -c source precedes the profile directory. macOS ps can
+        # truncate that long command line, hiding the identity we need to match.
+        executable = "/bin/ps" if sys.platform == "darwin" else "ps"
+        listing = subprocess.run([executable, "-ww", "-p", str(pid), "-o", "args="], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=3)
     except (OSError, subprocess.SubprocessError):
         return None
     return listing.stdout if listing.returncode == 0 else b""
